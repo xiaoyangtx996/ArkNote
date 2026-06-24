@@ -1,0 +1,34 @@
+[[permission]]
+identifier = "allow-renderer-ready"
+description = "Allow renderer_ready command."
+commands.allow = ["renderer_ready"]
+
+[[permission]]
+identifier = "allow-hide-main-window"
+description = "Allow hide_main_window_cmd command."
+commands.allow = ["hide_main_window_cmd"]
+
+[[permission]]
+identifier = "allow-set-ignore-cursor-events"
+description = "Allow set_ignore_cursor_events command."
+commands.allow = ["set_ignore_cursor_events"]
+
+[[permission]]
+identifier = "allow-quit-app"
+description = "Allow quit_app command."
+commands.allow = ["quit_app"]
+
+[[permission]]
+identifier = "allow-set-always-on-top"
+description = "Allow set_always_on_top command."
+commands.allow = ["set_always_on_top"]
+
+[[permission]]
+identifier = "allow-request-tray-new-note"
+description = "Allow request_tray_new_note command."
+commands.allow = ["request_tray_new_note"]
+
+[[permission]]
+identifier = "allow-show-notes"
+description = "Allow show_notes_cmd command."
+commands.allow = ["show_notes_cmd"]

@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for TextTop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "global-shortcut:default",
+    "allow-renderer-ready",
+    "allow-hide-main-window",
+    "allow-set-ignore-cursor-events",
+    "allow-quit-app",
+    "allow-set-always-on-top",
+    "allow-request-tray-new-note",
+    "allow-show-notes"
+  ]
+}

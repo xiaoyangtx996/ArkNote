@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- 透明底，仅便签图形 -->
+  <path d="M56 40h120c8.8 0 16 7.2 16 16v120c0 8.8-7.2 16-16 16H88L56 160V56c0-8.8 7.2-16 16-16z" fill="#FEF08A" stroke="#CA8A04" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M152 160h24c8.8 0 16-7.2 16-16v-24L152 160z" fill="#FDE047" stroke="#CA8A04" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="76" cy="68" r="10" fill="#4F46E5"/>
+  <rect x="72" y="92" width="88" height="8" rx="4" fill="#CA8A04" opacity="0.45"/>
+  <rect x="72" y="112" width="72" height="8" rx="4" fill="#CA8A04" opacity="0.45"/>
+  <rect x="72" y="132" width="56" height="8" rx="4" fill="#CA8A04" opacity="0.45"/>
+</svg>
