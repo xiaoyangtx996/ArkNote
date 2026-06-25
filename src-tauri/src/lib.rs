@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{
     include_image,
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
@@ -182,6 +183,119 @@ fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("notes.json"))
+}
+
+fn note_dir(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("notes").join(note_id.to_string()))
+}
+
+fn note_images_dir(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
+    Ok(note_dir(app, note_id)?.join("images"))
+}
+
+fn validate_image_rel(path: &str) -> Result<(), String> {
+    if !path.starts_with("images/") || path.contains("..") || path.contains('\\') {
+        return Err("invalid image path".into());
+    }
+    Ok(())
+}
+
+fn image_path_for_rel(app: &AppHandle, note_id: u32, rel: &str) -> Result<PathBuf, String> {
+    validate_image_rel(rel)?;
+    let base = note_dir(app, note_id)?;
+    let path = base.join(rel);
+    let images_dir = base.join("images");
+    if !path.starts_with(&images_dir) {
+        return Err("invalid image path".into());
+    }
+    Ok(path)
+}
+
+fn extract_image_refs(content: &str) -> HashSet<String> {
+    let mut refs = HashSet::new();
+    let mut rest = content;
+    while let Some(idx) = rest.find("](images/") {
+        let sub = &rest[idx + 2..];
+        if let Some(end) = sub.find(')') {
+            refs.insert(sub[..end].to_string());
+            rest = &sub[end..];
+        } else {
+            break;
+        }
+    }
+    refs
+}
+
+fn sync_note_images(app: &AppHandle, note_id: u32, content: &str) -> Result<(), String> {
+    let referenced = extract_image_refs(content);
+    let dir = note_images_dir(app, note_id)?;
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let rel = format!("images/{}", name);
+        if !referenced.contains(&rel) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn delete_note_assets(app: &AppHandle, note_id: u32) -> Result<(), String> {
+    let dir = note_dir(app, note_id)?;
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn sanitize_image_ext(ext: &str) -> String {
+    match ext.to_lowercase().as_str() {
+        "jpeg" => "jpg".to_string(),
+        "png" | "jpg" | "gif" | "webp" | "bmp" => ext.to_lowercase(),
+        _ => "png".to_string(),
+    }
+}
+
+fn image_mime_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        _ => "image/png",
+    }
+}
+
+fn new_image_filename(ext: &str) -> String {
+    let ts = chrono_timestamp_ms();
+    format!("img_{}.{}", ts, sanitize_image_ext(ext))
+}
+
+fn read_note_image_data_url(
+    app: &AppHandle,
+    note_id: u32,
+    relative_path: &str,
+) -> Result<String, String> {
+    let path = image_path_for_rel(app, note_id, relative_path)?;
+    if !path.exists() {
+        return Err(format!("image not found: {relative_path}"));
+    }
+    let data = fs::read(&path).map_err(|e| e.to_string())?;
+    let mime = image_mime_for_path(&path);
+    let encoded = STANDARD.encode(data);
+    Ok(format!("data:{mime};base64,{encoded}"))
 }
 
 fn load_notes(app: &AppHandle) -> Result<StoredNotes, String> {
@@ -432,6 +546,9 @@ fn patch_note_cmd(app: AppHandle, note_id: u32, patch: NotePatch) -> Result<(), 
         return Ok(());
     };
     apply_note_patch(note, &patch);
+    if patch.content.is_some() {
+        let _ = sync_note_images(&app, note_id, &note.content);
+    }
     save_notes(&app, &state, false)
 }
 
@@ -449,6 +566,7 @@ fn close_note_data_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
         state.closed_notes.insert(0, note);
     } else {
         state.saved_at_map.remove(&note_id);
+        let _ = delete_note_assets(&app, note_id);
     }
 
     save_notes(&app, &state, true)?;
@@ -477,6 +595,7 @@ fn delete_closed_note_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
     let mut state = load_notes(&app)?;
     state.closed_notes.retain(|note| note.id != note_id);
     state.saved_at_map.remove(&note_id);
+    let _ = delete_note_assets(&app, note_id);
     save_notes(&app, &state, true)
 }
 
@@ -520,6 +639,47 @@ fn chrono_timestamp_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[tauri::command]
+fn save_note_image_cmd(
+    app: AppHandle,
+    note_id: u32,
+    data: Vec<u8>,
+    extension: Option<String>,
+) -> Result<String, String> {
+    if data.is_empty() {
+        return Err("empty image data".into());
+    }
+    let ext = extension.as_deref().unwrap_or("png");
+    let filename = new_image_filename(ext);
+    let dir = note_images_dir(&app, note_id)?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&filename);
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    Ok(format!("images/{}", filename))
+}
+
+#[tauri::command]
+fn read_note_image_data_url_cmd(
+    app: AppHandle,
+    note_id: u32,
+    relative_path: String,
+) -> Result<String, String> {
+    read_note_image_data_url(&app, note_id, &relative_path)
+}
+
+#[tauri::command]
+fn resolve_note_image_path_cmd(
+    app: AppHandle,
+    note_id: u32,
+    relative_path: String,
+) -> Result<String, String> {
+    let path = image_path_for_rel(&app, note_id, &relative_path)?;
+    if !path.exists() {
+        return Err("image not found".into());
+    }
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -701,6 +861,9 @@ pub fn run() {
             set_note_always_on_top,
             get_settings_cmd,
             set_last_note_close_cmd,
+            save_note_image_cmd,
+            read_note_image_data_url_cmd,
+            resolve_note_image_path_cmd,
             quit_app,
         ])
         .setup(|app| {

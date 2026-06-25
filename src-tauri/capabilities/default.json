@@ -26,6 +26,9 @@
     "allow-set-note-always-on-top",
     "allow-get-settings",
     "allow-set-last-note-close",
+    "allow-save-note-image",
+    "allow-read-note-image-data-url",
+    "allow-resolve-note-image-path",
     "allow-quit-app"
   ]
 }

@@ -1,18 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { Rnd } from 'react-rnd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { Card, CardContent, CardHeader } from './ui/card'
+import { Card, CardHeader } from './ui/card'
 import { Button } from './ui/button'
 import { Textarea } from './ui/textarea'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs'
 import { X, Pin, PinOff, PlusCircle, Copy, Check } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { cn } from '../lib/utils'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { formatSavedTime } from '@/lib/format-time'
 import type { Note } from '@/lib/note-storage'
 import { NoteListMenu } from './note-list-menu'
+import { NoteMarkdown } from './note-markdown'
+import { buildImageMarkdown, saveNoteImageFromClipboard } from '@/lib/note-images'
+import { isTauri } from '@/lib/tauri'
 
 interface NoteWindowProps {
   note: Note
@@ -48,6 +49,8 @@ export function NoteWindow({
   const [draftTitle, setDraftTitle] = useState(note.title)
   const [copied, setCopied] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const pendingSelectionRef = useRef<number | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const charCount = note.content.replace(/\s/g, '').length
 
@@ -78,6 +81,42 @@ export function NoteWindow({
   const cancelTitleEdit = () => {
     setDraftTitle(note.title)
     setIsEditingTitle(false)
+  }
+
+  useEffect(() => {
+    if (pendingSelectionRef.current === null || !textareaRef.current) return
+    const pos = pendingSelectionRef.current
+    pendingSelectionRef.current = null
+    textareaRef.current.focus()
+    textareaRef.current.setSelectionRange(pos, pos)
+  }, [note.content])
+
+  const insertAtCursor = (insert: string) => {
+    const el = textareaRef.current
+    if (!el) {
+      onUpdate({ content: note.content + insert })
+      return
+    }
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const newContent = note.content.slice(0, start) + insert + note.content.slice(end)
+    pendingSelectionRef.current = start + insert.length
+    onUpdate({ content: newContent })
+  }
+
+  const handleContentPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!isTauri()) return
+    const items = e.clipboardData.items
+    for (const item of items) {
+      if (!item.type.startsWith('image/')) continue
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) return
+      const relativePath = await saveNoteImageFromClipboard(note.id, file)
+      if (!relativePath) return
+      insertAtCursor(buildImageMarkdown(relativePath))
+      return
+    }
   }
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -264,13 +303,13 @@ export function NoteWindow({
       onMouseDown={() => onActivate?.()}
       onKeyDown={handleKeyDown}
       className={cn(
-        'relative h-full flex flex-col overflow-hidden rounded-lg border shadow-none drop-shadow-xl',
+        'relative flex h-full min-h-0 flex-col overflow-hidden rounded-lg border shadow-none drop-shadow-xl',
         getThemeStyles(),
         'border-gray-200 dark:border-gray-700',
       )}
     >
         {resizeHandles}
-        <CardHeader className="relative z-10 p-2 flex flex-row items-center justify-between space-y-0 border-b gap-1">
+        <CardHeader className="relative z-10 shrink-0 flex flex-row items-center justify-between space-y-0 border-b gap-1 p-2">
           <TooltipProvider delayDuration={800} skipDelayDuration={0}>
             <div className="flex flex-1 items-center gap-1 min-w-0 w-full">
               <div className="flex items-center gap-1 text-xs font-medium min-w-0 max-w-[45%] shrink-0">
@@ -343,31 +382,33 @@ export function NoteWindow({
           </TooltipProvider>
         </CardHeader>
 
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col">
-          <TabsList className="grid grid-cols-2 mx-2 mt-2">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="mx-2 mt-2 grid shrink-0 grid-cols-2">
             <TabsTrigger value="edit">编辑</TabsTrigger>
             <TabsTrigger value="preview">预览</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="edit" className="flex-1 p-0 m-0">
-            <CardContent className="p-2 flex-1 h-full">
-              <Textarea
-                value={note.content}
-                onChange={handleContentChange}
-                className="h-full min-h-[150px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent"
-                placeholder="开始输入..."
-              />
-            </CardContent>
-          </TabsContent>
-
-          <TabsContent value="preview" className="flex-1 p-0 m-0">
-            <CardContent className="p-4 prose prose-sm dark:prose-invert max-w-none h-full overflow-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{note.content}</ReactMarkdown>
-            </CardContent>
-          </TabsContent>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            {activeTab === 'edit' ? (
+              <div className="absolute inset-0 flex flex-col p-2">
+                <Textarea
+                  ref={textareaRef}
+                  value={note.content}
+                  onChange={handleContentChange}
+                  onPaste={handleContentPaste}
+                  className="min-h-0 flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                  placeholder="开始输入…可直接粘贴图片"
+                />
+              </div>
+            ) : (
+              <div className="absolute inset-0 overflow-y-auto p-4">
+                <NoteMarkdown noteId={note.id} content={note.content} />
+              </div>
+            )}
+          </div>
         </Tabs>
 
-        <div className="p-2 text-xs text-gray-500 dark:text-gray-400 border-t flex justify-between items-center">
+        <div className="shrink-0 border-t p-2 text-xs text-gray-500 dark:text-gray-400 flex justify-between items-center">
           <div>{charCount} 字</div>
           <div>{savedAt ? `上次保存: ${formatSavedTime(savedAt)}` : '尚未保存'}</div>
         </div>
