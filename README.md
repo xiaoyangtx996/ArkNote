@@ -1,35 +1,39 @@
 # 便签
 
-Windows 桌面便签应用。常驻系统托盘，透明桌面悬浮，支持多便签、置顶、Markdown 预览。
-
-基于 **Tauri 2**（Rust 后端 + React 前端）。
+Windows 桌面便签。托盘常驻，每张便签一个原生窗口。
 
 ## 功能
 
-- 系统托盘运行，不占用任务栏
-- 透明背景，只显示便签本体
-- 便签可拖拽、缩放、置顶
-- 编辑 / 预览（Markdown + GFM 表格/任务列表）双模式
-- 便签内容自动保存到本地（重启后恢复）
-- 托盘菜单：显示便签、新建便签、快速颜色切换、切换暗色模式、退出
-- 快捷键：`Ctrl + N` 新建便签
+- 托盘左键：显示所有便签
+- 托盘右键：系统菜单（显示便签 / 新建 / 颜色 / 暗色模式 / 退出）
+- 每张便签独立窗口，透明背景，只显示便签本体
+- 标题栏拖动、边缘缩放、置顶
+- 编辑 / Markdown 预览、自动保存
+- `Ctrl+N` 新建便签
 
-## 环境要求
+## 架构（简单直接）
 
-- Node.js 18+
-- Rust 1.77+（[安装 Rust](https://www.rust-lang.org/tools/install)）
-- Windows 10 / 11
-
-## 安装依赖
-
-```bash
-npm install
 ```
+托盘 (Rust 原生菜单)
+  ├─ 左键 → 显示所有便签窗口
+  ├─ 右键 → 菜单项直接调 Rust
+  └─ Ctrl+N → Rust 创建新窗口
+
+便签窗口 note-{id} (React)
+  ├─ 按窗口 label 加载对应便签
+  ├─ localStorage 读写数据
+  └─ 拖动/缩放 → 原生窗口 API
+
+note-1 额外职责：启动时打开其余已保存便签；响应托盘主题切换事件
+```
+
+**没有** manager 隐藏窗口、没有 React 托盘菜单、没有 renderer_ready / sync 握手。
 
 ## 开发
 
 ```bash
-npm run tauri:dev
+npm run tauri:dev    # 桌面版
+npm run dev          # 浏览器单页预览（仅开发 UI 用）
 ```
 
 ## 打包
@@ -38,48 +42,4 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-产物在 `src-tauri/target/release/bundle/`：
-
-| 文件 | 说明 |
-|------|------|
-| `nsis/便签_1.0.0_x64-setup.exe` | 安装包 |
-| 同目录下绿色版可执行文件 | 可直接运行 |
-
-## 使用说明
-
-1. 启动后托盘出现便签图标
-2. **左键**托盘：显示便签窗口（关闭穿透，可直接操作）
-3. **右键**托盘：打开/关闭样式菜单
-4. 菜单项「显示便签」：关闭菜单并恢复窗口可交互
-5. 「快速颜色切换」：展开子菜单选择商务白 / 护眼绿 / 暗色，或循环切换全部便签主题
-6. 每张便签内用 **编辑 / 预览** Tab 单独切换模式（托盘不再全局切换）
-7. 关闭便签窗口不会退出应用，仍驻留托盘
-8. 关闭所有便签后窗口自动隐藏，可从托盘再次显示或新建
-
-## 项目结构
-
-```
-├── src/                 React 前端
-├── src-tauri/           Rust 后端（托盘、窗口、快捷键）
-│   ├── src/lib.rs       主逻辑
-│   ├── tauri.conf.json  Tauri 配置
-│   └── icons/           应用图标
-├── public/              图标源文件
-└── scripts/             图标生成脚本
-```
-
-## 技术栈
-
-- Tauri 2 + Rust
-- React 18 + TypeScript
-- Vite 5
-- Tailwind CSS
-
-## 脚本
-
-| 命令 | 说明 |
-|------|------|
-| `npm run tauri:dev` | 开发模式（热更新 + Tauri） |
-| `npm run tauri:build` | 构建安装包 |
-| `npm run dev` | 仅启动 Vite（浏览器预览 UI） |
-| `npm run icons` | 从 SVG 生成 PNG 图标 |
+产物：`src-tauri/target/release/bundle/nsis/便签_1.0.0_x64-setup.exe`

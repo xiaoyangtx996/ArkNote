@@ -10,22 +10,7 @@
     "beforeBuildCommand": "npm run icons && vite build"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "便签",
-        "width": 800,
-        "height": 600,
-        "transparent": true,
-        "decorations": false,
-        "shadow": false,
-        "skipTaskbar": true,
-        "visible": false,
-        "resizable": false,
-        "fullscreen": false,
-        "alwaysOnTop": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

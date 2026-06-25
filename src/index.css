@@ -57,8 +57,18 @@
   body,
   #root {
     background: transparent !important;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
   }
   body {
     @apply text-foreground;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  textarea,
+  .note-title-input {
+    -webkit-user-select: text;
+    user-select: text;
   }
 }

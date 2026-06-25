@@ -1,60 +1,88 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invoke, isTauri as tauriIsTauri } from '@tauri-apps/api/core'
+import type { Note } from '@/lib/note-storage'
 
-export const isTauri = () => '__TAURI_INTERNALS__' in window
-
-type EventHandler = () => void
-
-export async function bindAppEvents(handlers: {
-  onNewNote: EventHandler
-  onTrayMenuToggle: EventHandler
-  onTrayMenuHide: EventHandler
-  onShowNotes: EventHandler
-}): Promise<UnlistenFn[]> {
-  const unlisteners = await Promise.all([
-    listen('new-note', handlers.onNewNote),
-    listen('tray-menu-toggle', handlers.onTrayMenuToggle),
-    listen('tray-menu-hide', handlers.onTrayMenuHide),
-    listen('tray-show-notes', handlers.onShowNotes),
-  ])
-
-  await invoke('renderer_ready')
-
-  return unlisteners
-}
-
-export async function sendCommand(
-  channel: string,
-  ...args: unknown[]
-): Promise<void> {
-  if (!isTauri()) return
-
-  switch (channel) {
-    case 'tray-new-note':
-      await invoke('request_tray_new_note')
-      break
-    case 'hide-main-window':
-      await invoke('hide_main_window_cmd')
-      break
-    case 'tray-quit':
-      await invoke('quit_app')
-      break
-    case 'tray-show-notes':
-      await invoke('show_notes_cmd')
-      break
-    case 'set-always-on-top':
-      await invoke('set_always_on_top', { always_on_top: args[0] })
-      break
-    default:
-      break
+export const isTauri = () => {
+  try {
+    return tauriIsTauri()
+  } catch {
+    return '__TAURI_INTERNALS__' in window
   }
 }
 
-export async function setMousePassthrough(enabled: boolean): Promise<void> {
-  if (!isTauri()) return
-  await invoke('set_ignore_cursor_events', { ignore: enabled })
+export interface NoteWindowSpec {
+  id: number
+  title: string
+  x: number
+  y: number
+  width: number
+  height: number
+  is_pinned: boolean
 }
 
-export async function ensureWindowInteractive(): Promise<void> {
-  await setMousePassthrough(false)
+export function noteToWindowSpec(note: Note): NoteWindowSpec {
+  return {
+    id: note.id,
+    title: note.title,
+    x: note.position.x,
+    y: note.position.y,
+    width: note.size.width,
+    height: note.size.height,
+    is_pinned: note.isPinned,
+  }
+}
+
+async function invokeSafe<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
+  try {
+    return await invoke<T>(command, args)
+  } catch (error) {
+    console.error(`[tauri] ${command} failed:`, error)
+    return null
+  }
+}
+
+export async function openNoteWindow(note: Note) {
+  if (!isTauri()) return
+  await invokeSafe('open_note_window', { note: noteToWindowSpec(note) })
+}
+
+export async function closeNoteWindow(noteId: number) {
+  if (!isTauri()) return
+  await invokeSafe('close_note_window', { noteId })
+}
+
+export async function updateNoteWindow(note: Note) {
+  if (!isTauri()) return
+  await invokeSafe('update_note_window', { note: noteToWindowSpec(note) })
+}
+
+export async function setNoteAlwaysOnTop(noteId: number, isPinned: boolean) {
+  if (!isTauri()) return
+  await invokeSafe('set_note_always_on_top', { noteId, isPinned })
+}
+
+export async function createNewNote() {
+  if (!isTauri()) return
+  await invoke('create_note_cmd')
+}
+
+export type LastNoteCloseAction = 'keep-tray' | 'quit-app' | 'confirm-quit'
+
+export interface AppSettings {
+  version: number
+  lastNoteClose: LastNoteCloseAction
+}
+
+export async function getAppSettings(): Promise<AppSettings | null> {
+  if (!isTauri()) return null
+  return invokeSafe<AppSettings>('get_settings_cmd')
+}
+
+export async function setLastNoteClose(action: LastNoteCloseAction) {
+  if (!isTauri()) return
+  await invokeSafe('set_last_note_close_cmd', { action })
+}
+
+export async function quitApp() {
+  if (!isTauri()) return
+  await invokeSafe('quit_app')
 }

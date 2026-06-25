@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Rnd } from 'react-rnd'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Card, CardContent, CardHeader } from './ui/card'
 import { Button } from './ui/button'
 import { Textarea } from './ui/textarea'
@@ -18,6 +19,7 @@ interface NoteWindowProps {
   zIndex: number
   savedAt?: number
   closedNotes: Note[]
+  variant?: 'embedded' | 'standalone'
   onUpdate: (updates: Partial<Note>) => void
   onClose: () => void
   onNewNote?: () => void
@@ -32,6 +34,7 @@ export function NoteWindow({
   zIndex,
   savedAt,
   closedNotes,
+  variant = 'embedded',
   onUpdate,
   onClose,
   onNewNote,
@@ -133,39 +136,141 @@ export function NoteWindow({
     }
   }
 
-  return (
-    <Rnd
-      position={note.position}
-      size={note.size}
-      minWidth={250}
-      minHeight={200}
-      bounds="parent"
-      dragHandleClassName="note-drag-handle"
-      cancel="textarea, button, input, [role='tab'], [role='tablist'], [data-radix-popper-content-wrapper], .note-title-input"
-      onDragStart={() => onActivate?.()}
-      onDragStop={(e, d) => {
-        onUpdate({ position: { x: d.x, y: d.y } })
-      }}
-      onResizeStop={(e, direction, ref, delta, position) => {
-        onUpdate({
-          size: { width: Number.parseInt(ref.style.width), height: Number.parseInt(ref.style.height) },
-          position,
-        })
-      }}
-      className="absolute rounded-lg overflow-hidden"
-      style={{ zIndex, background: 'transparent' }}
+  const startWindowDrag = (e: React.MouseEvent) => {
+    if (variant !== 'standalone' || e.button !== 0) return
+    e.preventDefault()
+    void getCurrentWindow().startDragging()
+  }
+
+  const startWindowResize = (e: React.MouseEvent, direction: 'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West') => {
+    if (variant !== 'standalone' || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    void getCurrentWindow().startResizeDragging(direction)
+  }
+
+  const resizeHandles =
+    variant === 'standalone' ? (
+      <div
+        className="pointer-events-auto absolute bottom-0 right-0 z-20 h-4 w-4 cursor-se-resize"
+        onMouseDown={e => startWindowResize(e, 'SouthEast')}
+        aria-hidden
+      />
+    ) : null
+
+  const headerActions =
+    variant === 'standalone' ? (
+      <div className="relative z-20 flex items-center gap-0.5 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          title="新建便签"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => {
+            e.stopPropagation()
+            onNewNote?.()
+          }}
+        >
+          <PlusCircle size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          title={copied ? '已复制' : '复制内容'}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => {
+            e.stopPropagation()
+            void handleCopy()
+          }}
+        >
+          {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+        </Button>
+        <NoteListMenu
+          closedNotes={closedNotes}
+          onRestore={onRestoreNote}
+          onDelete={onDeleteClosedNote}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          title="关闭便签"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => {
+            e.stopPropagation()
+            onClose()
+          }}
+        >
+          <X size={14} />
+        </Button>
+      </div>
+    ) : (
+      <div className="relative z-10 flex items-center gap-1 shrink-0">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onMouseDown={e => e.stopPropagation()}
+              onClick={() => onNewNote?.()}
+            >
+              <PlusCircle size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">新建便签</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onMouseDown={e => e.stopPropagation()}
+              onClick={() => void handleCopy()}
+            >
+              {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{copied ? '已复制' : '复制内容'}</TooltipContent>
+        </Tooltip>
+        <NoteListMenu
+          closedNotes={closedNotes}
+          onRestore={onRestoreNote}
+          onDelete={onDeleteClosedNote}
+        />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onMouseDown={e => e.stopPropagation()}
+              onClick={onClose}
+            >
+              <X size={14} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">关闭便签</TooltipContent>
+        </Tooltip>
+      </div>
+    )
+
+  const card = (
+    <Card
+      data-note-window
+      onMouseDown={() => onActivate?.()}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'relative h-full flex flex-col overflow-hidden rounded-lg border shadow-none drop-shadow-xl',
+        getThemeStyles(),
+        'border-gray-200 dark:border-gray-700',
+      )}
     >
-      <Card
-        data-note-window
-        onMouseDown={() => onActivate?.()}
-        onKeyDown={handleKeyDown}
-        className={cn(
-          'h-full flex flex-col border-2 shadow-none drop-shadow-xl',
-          getThemeStyles(),
-          'border-gray-200 dark:border-gray-700',
-        )}
-      >
-        <CardHeader className="p-2 flex flex-row items-center justify-between space-y-0 border-b gap-1">
+        {resizeHandles}
+        <CardHeader className="relative z-10 p-2 flex flex-row items-center justify-between space-y-0 border-b gap-1">
           <TooltipProvider delayDuration={800} skipDelayDuration={0}>
             <div className="flex flex-1 items-center gap-1 min-w-0 w-full">
               <div className="flex items-center gap-1 text-xs font-medium min-w-0 max-w-[45%] shrink-0">
@@ -217,6 +322,7 @@ export function NoteWindow({
               <span
                 className="truncate cursor-text select-none"
                 title={`${note.title}（双击编辑）`}
+                onMouseDown={variant === 'standalone' ? startWindowDrag : undefined}
                 onDoubleClick={e => {
                   e.stopPropagation()
                   setDraftTitle(note.title)
@@ -227,48 +333,12 @@ export function NoteWindow({
               </span>
             )}
             </div>
-            <div className="note-drag-handle flex-1 h-6 min-w-[12px] cursor-move" aria-hidden />
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => onNewNote?.()}
-                  >
-                    <PlusCircle size={14} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">新建便签</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => void handleCopy()}
-                  >
-                    {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{copied ? '已复制' : '复制内容'}</TooltipContent>
-              </Tooltip>
-              <NoteListMenu
-                closedNotes={closedNotes}
-                onRestore={onRestoreNote}
-                onDelete={onDeleteClosedNote}
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
-                    <X size={14} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">关闭便签</TooltipContent>
-              </Tooltip>
-            </div>
+            <div
+              className="note-drag-handle flex-1 h-6 min-w-[12px] cursor-move"
+              onMouseDown={startWindowDrag}
+              aria-hidden
+            />
+            {headerActions}
             </div>
           </TooltipProvider>
         </CardHeader>
@@ -302,6 +372,39 @@ export function NoteWindow({
           <div>{savedAt ? `上次保存: ${formatSavedTime(savedAt)}` : '尚未保存'}</div>
         </div>
       </Card>
+  )
+
+  if (variant === 'standalone') {
+    return (
+      <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ zIndex }}>
+        <div className="relative h-full">{card}</div>
+      </div>
+    )
+  }
+
+  return (
+    <Rnd
+      position={note.position}
+      size={note.size}
+      minWidth={250}
+      minHeight={200}
+      bounds="parent"
+      dragHandleClassName="note-drag-handle"
+      cancel="textarea, button, input, [role='tab'], [role='tablist'], [data-radix-popper-content-wrapper], .note-title-input"
+      onDragStart={() => onActivate?.()}
+      onDragStop={(_e, d) => {
+        onUpdate({ position: { x: d.x, y: d.y } })
+      }}
+      onResizeStop={(_e, _direction, ref, _delta, position) => {
+        onUpdate({
+          size: { width: Number.parseInt(ref.style.width, 10), height: Number.parseInt(ref.style.height, 10) },
+          position,
+        })
+      }}
+      className="absolute rounded-lg overflow-hidden"
+      style={{ zIndex, background: 'transparent' }}
+    >
+      {card}
     </Rnd>
   )
 }

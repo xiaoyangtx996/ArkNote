@@ -1,17 +1,67 @@
 [[permission]]
-identifier = "allow-renderer-ready"
-description = "Allow renderer_ready command."
-commands.allow = ["renderer_ready"]
+identifier = "allow-load-notes"
+description = "Allow load_notes_cmd command."
+commands.allow = ["load_notes_cmd"]
 
 [[permission]]
-identifier = "allow-hide-main-window"
-description = "Allow hide_main_window_cmd command."
-commands.allow = ["hide_main_window_cmd"]
+identifier = "allow-patch-note"
+description = "Allow patch_note_cmd command."
+commands.allow = ["patch_note_cmd"]
 
 [[permission]]
-identifier = "allow-set-ignore-cursor-events"
-description = "Allow set_ignore_cursor_events command."
-commands.allow = ["set_ignore_cursor_events"]
+identifier = "allow-close-note-data"
+description = "Allow close_note_data_cmd command."
+commands.allow = ["close_note_data_cmd"]
+
+[[permission]]
+identifier = "allow-restore-note"
+description = "Allow restore_note_cmd command."
+commands.allow = ["restore_note_cmd"]
+
+[[permission]]
+identifier = "allow-delete-closed-note"
+description = "Allow delete_closed_note_cmd command."
+commands.allow = ["delete_closed_note_cmd"]
+
+[[permission]]
+identifier = "allow-apply-theme"
+description = "Allow apply_theme_cmd command."
+commands.allow = ["apply_theme_cmd"]
+
+[[permission]]
+identifier = "allow-cycle-theme"
+description = "Allow cycle_theme_cmd command."
+commands.allow = ["cycle_theme_cmd"]
+
+[[permission]]
+identifier = "allow-touch-saved-at"
+description = "Allow touch_saved_at_cmd command."
+commands.allow = ["touch_saved_at_cmd"]
+
+[[permission]]
+identifier = "allow-open-note-window"
+description = "Allow open_note_window command."
+commands.allow = ["open_note_window"]
+
+[[permission]]
+identifier = "allow-close-note-window"
+description = "Allow close_note_window command."
+commands.allow = ["close_note_window"]
+
+[[permission]]
+identifier = "allow-update-note-window"
+description = "Allow update_note_window command."
+commands.allow = ["update_note_window"]
+
+[[permission]]
+identifier = "allow-set-note-always-on-top"
+description = "Allow set_note_always_on_top command."
+commands.allow = ["set_note_always_on_top"]
+
+[[permission]]
+identifier = "allow-create-note"
+description = "Allow create_note_cmd command."
+commands.allow = ["create_note_cmd"]
 
 [[permission]]
 identifier = "allow-quit-app"
@@ -19,16 +69,11 @@ description = "Allow quit_app command."
 commands.allow = ["quit_app"]
 
 [[permission]]
-identifier = "allow-set-always-on-top"
-description = "Allow set_always_on_top command."
-commands.allow = ["set_always_on_top"]
+identifier = "allow-get-settings"
+description = "Allow get_settings_cmd command."
+commands.allow = ["get_settings_cmd"]
 
 [[permission]]
-identifier = "allow-request-tray-new-note"
-description = "Allow request_tray_new_note command."
-commands.allow = ["request_tray_new_note"]
-
-[[permission]]
-identifier = "allow-show-notes"
-description = "Allow show_notes_cmd command."
-commands.allow = ["show_notes_cmd"]
+identifier = "allow-set-last-note-close"
+description = "Allow set_last_note_close_cmd command."
+commands.allow = ["set_last_note_close_cmd"]

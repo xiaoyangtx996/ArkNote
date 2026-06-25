@@ -1,6 +1,5 @@
-'use client'
-
 import { createContext, useContext, useEffect, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
 
 type Theme = 'light' | 'dark'
 
@@ -29,15 +28,39 @@ export function ThemeProvider({
   ...props
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme,
   )
 
   useEffect(() => {
     const root = window.document.documentElement
-
     root.classList.remove('light', 'dark')
     root.classList.add(theme)
   }, [theme])
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === storageKey && e.newValue) {
+        setTheme(e.newValue as Theme)
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [storageKey])
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    void listen('toggle-app-theme', () => {
+      const current = (localStorage.getItem(storageKey) as Theme) || 'light'
+      const next = current === 'dark' ? 'light' : 'dark'
+      localStorage.setItem(storageKey, next)
+      setTheme(next)
+    }).then(fn => {
+      unlisten = fn
+    })
+    return () => {
+      unlisten?.()
+    }
+  }, [storageKey])
 
   const value = {
     theme,

@@ -6,7 +6,15 @@ const host = process.env.TAURI_DEV_HOST
 
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'tauri-strip-crossorigin',
+      transformIndexHtml(html) {
+        return html.replace(/\s+crossorigin/g, '')
+      },
+    },
+  ],
   clearScreen: false,
   resolve: {
     alias: {

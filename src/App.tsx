@@ -1,9 +1,6 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { NoteWindow } from './components/note-window'
 import { ThemeProvider } from './components/theme-provider'
-import { TrayMenuOverlay } from './components/tray-menu-overlay'
-import { bindAppEvents, isTauri, sendCommand } from './lib/tauri'
-import { useMousePassthrough } from './hooks/use-mouse-passthrough'
 import { useNotes } from './hooks/use-notes'
 
 function AppContent() {
@@ -16,15 +13,10 @@ function AppContent() {
     handleNoteClose,
     handleRestoreNote,
     handleDeleteClosedNote,
-    handleApplyAllTheme,
-    handleCycleNoteTheme,
     handleSaveNow,
   } = useNotes()
-  const [trayMenuOpen, setTrayMenuOpen] = useState(false)
-  const [trayMenuTrigger, setTrayMenuTrigger] = useState<'left' | 'right'>('right')
   const [noteZIndexes, setNoteZIndexes] = useState<Record<number, number>>({})
   const zCounterRef = useRef(0)
-  const handleNewNoteRef = useRef<() => void>(() => {})
 
   const bringNoteToFront = useCallback((noteId: number) => {
     zCounterRef.current += 1
@@ -40,13 +32,10 @@ function AppContent() {
     (noteId: number) => {
       if (handleRestoreNote(noteId)) {
         bringNoteToFront(noteId)
-        if (isTauri()) void sendCommand('tray-show-notes')
       }
     },
     [handleRestoreNote, bringNoteToFront],
   )
-
-  handleNewNoteRef.current = createAndFocusNote
 
   useEffect(() => {
     setNoteZIndexes(prev => {
@@ -73,43 +62,8 @@ function AppContent() {
     })
   }, [notes])
 
-  useMousePassthrough()
-
-  const handleShowNotes = useCallback(() => {
-    setTrayMenuOpen(false)
-    if (isTauri()) void sendCommand('tray-show-notes')
-  }, [])
-
-  const anyPinned = useMemo(() => notes.some(note => note.isPinned), [notes])
-
-  useEffect(() => {
-    if (!isTauri()) return
-
-    let unlisteners: (() => void)[] = []
-
-    void bindAppEvents({
-      onNewNote: () => handleNewNoteRef.current(),
-      onTrayMenuToggle: () => {
-        setTrayMenuTrigger('right')
-        setTrayMenuOpen(v => !v)
-      },
-      onTrayMenuHide: () => setTrayMenuOpen(false),
-      onShowNotes: handleShowNotes,
-    }).then(unsubs => {
-      unlisteners = unsubs
-    })
-
-    return () => {
-      unlisteners.forEach(unlisten => unlisten())
-    }
-  }, [handleShowNotes])
-
-  useEffect(() => {
-    void sendCommand('set-always-on-top', anyPinned)
-  }, [anyPinned])
-
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-transparent">
+    <div className="relative h-screen w-screen overflow-hidden bg-gray-100">
       {notes.map(note => (
         <NoteWindow
           key={note.id}
@@ -123,20 +77,16 @@ function AppContent() {
           onSaveNow={() => handleSaveNow(note.id)}
           onRestoreNote={handleRestoreClosedNote}
           onDeleteClosedNote={handleDeleteClosedNote}
-          onNewNote={() => {
-            if (isTauri()) void sendCommand('tray-new-note')
-            else createAndFocusNote()
-          }}
+          onNewNote={createAndFocusNote}
         />
       ))}
-      <TrayMenuOverlay
-        open={trayMenuOpen}
-        onOpenChange={setTrayMenuOpen}
-        openedBy={trayMenuTrigger}
-        onShowNotes={handleShowNotes}
-        onApplyNoteTheme={handleApplyAllTheme}
-        onCycleNoteTheme={handleCycleNoteTheme}
-      />
+      <button
+        type="button"
+        className="fixed bottom-4 right-4 z-[10000] rounded-md border bg-white px-3 py-2 text-sm shadow-md hover:bg-gray-50"
+        onClick={createAndFocusNote}
+      >
+        新建便签（浏览器预览）
+      </button>
     </div>
   )
 }

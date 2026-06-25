@@ -2,27 +2,25 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { NOTE_THEMES, type NoteThemeId } from '@/lib/note-themes'
 import { loadNotes, saveNotes, type Note } from '@/lib/note-storage'
 import { formatSavedTime } from '@/lib/format-time'
-import { sendCommand } from '@/lib/tauri'
 
 export { formatSavedTime }
 
-function getViewportSize() {
-  const width = window.innerWidth > 0 ? window.innerWidth : window.screen.availWidth
-  const height = window.innerHeight > 0 ? window.innerHeight : window.screen.availHeight
-  return { width, height }
+function getDefaultNoteScreenPosition(id: number) {
+  const offset = (id % 8) * 28
+  const width = window.screen?.availWidth ?? 1920
+  const height = window.screen?.availHeight ?? 1080
+  return {
+    x: Math.max(40, width / 2 - 150 + offset),
+    y: Math.max(40, height / 2 - 100 + offset),
+  }
 }
 
 function createNote(id: number): Note {
-  const { width, height } = getViewportSize()
-  const offset = (id % 8) * 28
   return {
     id,
     title: `便签 #${id}`,
     content: '',
-    position: {
-      x: Math.max(40, width / 2 - 150 + offset),
-      y: Math.max(40, height / 2 - 100 + offset),
-    },
+    position: getDefaultNoteScreenPosition(id),
     size: { width: 300, height: 400 },
     isPinned: false,
     theme: 'business',
@@ -129,13 +127,7 @@ export function useNotes() {
     const note = notesRef.current.find(item => item.id === noteId)
     if (!note) return
 
-    setNotes(prev => {
-      const next = prev.filter(item => item.id !== noteId)
-      if (next.length === 0) {
-        void sendCommand('hide-main-window')
-      }
-      return next
-    })
+    setNotes(prev => prev.filter(item => item.id !== noteId))
 
     if (hasNoteContent(note)) {
       setClosedNotes(prev => [note, ...prev.filter(item => item.id !== noteId)])
