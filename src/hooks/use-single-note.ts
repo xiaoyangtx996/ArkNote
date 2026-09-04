@@ -97,9 +97,8 @@ export function useSingleNote(noteId: number) {
       saveTimerRef.current = undefined
     }
     if (!noteRef.current) return
-    await patchNoteInStore(noteId, noteRef.current)
-    const state = readNotesState()
-    setSavedAt(state.savedAtMap[noteId])
+    const state = await patchNoteInStore(noteId, noteRef.current)
+    setSavedAt(state.savedAtMap[noteId] ?? Date.now())
   }, [noteId])
 
   useEffect(() => {
@@ -181,10 +180,14 @@ export function useSingleNote(noteId: number) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = setTimeout(() => {
         if (!noteRef.current) return
-        void patchNoteInStore(noteId, noteRef.current).then(() => {
-          const state = readNotesState()
-          setSavedAt(state.savedAtMap[noteId])
-        })
+        const snapshot = noteRef.current
+        void patchNoteInStore(noteId, snapshot)
+          .then(state => {
+            setSavedAt(state.savedAtMap[noteId] ?? Date.now())
+          })
+          .catch(error => {
+            console.error('[note] autosave failed:', error)
+          })
       }, 500)
     },
     [noteId],
@@ -211,13 +214,7 @@ export function useSingleNote(noteId: number) {
 
     closingRef.current = true
     try {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current)
-        saveTimerRef.current = undefined
-      }
-      if (noteRef.current) {
-        await patchNoteInStore(noteId, noteRef.current).catch(() => {})
-      }
+      await flushPendingSave().catch(() => {})
       await invoke('close_note_data_cmd', { noteId })
       await getCurrentWindow().destroy()
       if (shouldQuit) {
@@ -227,20 +224,16 @@ export function useSingleNote(noteId: number) {
       closingRef.current = false
       console.error('[note] close failed:', error)
     }
-  }, [noteId])
+  }, [noteId, flushPendingSave])
 
   const handleSaveNow = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = undefined
-    }
-    if (!noteRef.current) return
-    void patchNoteInStore(noteId, noteRef.current).then(() => {
+    void flushPendingSave().then(() => {
+      if (!noteRef.current) return
       void touchNoteSavedAtAsync(noteId).then(state => {
         setSavedAt(state.savedAtMap[noteId])
       })
     })
-  }, [noteId])
+  }, [flushPendingSave, noteId])
 
   const handleRestoreNote = useCallback(async (restoreId: number) => {
     await restoreNoteInStoreAsync(restoreId)
@@ -269,11 +262,18 @@ export function useSingleNote(noteId: number) {
   useEffect(() => {
     return () => {
       if (closingRef.current) return
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = undefined
+      }
       if (moveTimerRef.current) clearTimeout(moveTimerRef.current)
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
+      // Flush pending edits so HMR / unexpected unmount does not drop debounce window.
+      if (noteRef.current) {
+        void patchNoteInStore(noteId, noteRef.current)
+      }
     }
-  }, [])
+  }, [noteId])
 
   return {
     ready,

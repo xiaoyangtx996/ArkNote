@@ -1,8 +1,9 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{
     include_image,
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
@@ -11,6 +12,10 @@ use tauri::{
     WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+/// In-memory notes authority. All RMW goes through this lock so concurrent
+/// window patches cannot clobber each other via stale whole-file rewrites.
+struct NotesStore(Mutex<StoredNotes>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,35 +184,128 @@ fn is_note_label(label: &str) -> bool {
     label.starts_with("note-")
 }
 
+const ARKNOTE_FOLDER: &str = "ArkNote";
+
+fn note_file_stem(note_id: u32) -> String {
+    format!("note-{note_id}")
+}
+
+/// User-visible documents root: `Documents/ArkNote/`.
+fn arknote_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let docs = app.path().document_dir().map_err(|e| e.to_string())?;
+    let root = docs.join(ARKNOTE_FOLDER);
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
 fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(arknote_root(app)?.join("index.json"))
+}
+
+fn legacy_app_data_notes_json(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("notes.json"))
 }
 
-fn note_dir(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
+fn legacy_note_dir(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("notes").join(note_id.to_string()))
 }
 
-fn note_images_dir(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
-    Ok(note_dir(app, note_id)?.join("images"))
+/// Parent directory for `{stem}.assets` / legacy `images` (ArkNote document root).
+fn note_dir(app: &AppHandle, _note_id: u32) -> Result<PathBuf, String> {
+    arknote_root(app)
+}
+
+/// Sanitize a display title for optional filesystem use (spaces → `_`).
+#[allow(dead_code)]
+fn sanitize_asset_stem(title: &str, note_id: u32) -> String {
+    let trimmed = title.trim();
+    let mut stem: String = if trimmed.is_empty() {
+        format!("note-{note_id}")
+    } else {
+        trimmed
+            .chars()
+            .map(|c| match c {
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                c if c.is_whitespace() => '_',
+                c if c.is_control() => '_',
+                c => c,
+            })
+            .collect()
+    };
+    stem = stem.trim().trim_matches('.').to_string();
+    if let Some(stripped) = stem.strip_suffix(".assets") {
+        stem = stripped.trim_end_matches('.').to_string();
+    }
+    if stem.is_empty() {
+        format!("note-{note_id}")
+    } else {
+        stem
+    }
+}
+
+fn assets_folder_name(_title: &str, note_id: u32) -> String {
+    // Stable, space-free folder so CommonMark/Vditor can parse image destinations.
+    format!("{}.assets", note_file_stem(note_id))
+}
+
+fn note_images_dir_for_title(app: &AppHandle, note_id: u32, title: &str) -> Result<PathBuf, String> {
+    Ok(arknote_root(app)?.join(assets_folder_name(title, note_id)))
+}
+
+fn note_markdown_path(app: &AppHandle, note_id: u32) -> Result<PathBuf, String> {
+    Ok(arknote_root(app)?.join(format!("{}.md", note_file_stem(note_id))))
+}
+
+fn parse_markdown_image_dest(raw: &str) -> String {
+    let mut dest = raw.trim();
+    if dest.starts_with('<') && dest.ends_with('>') && dest.len() >= 2 {
+        dest = dest[1..dest.len() - 1].trim();
+    }
+    dest.trim_start_matches("./").to_string()
 }
 
 fn validate_image_rel(path: &str) -> Result<(), String> {
-    if !path.starts_with("images/") || path.contains("..") || path.contains('\\') {
+    let path = parse_markdown_image_dest(path);
+    if path.contains("..") || path.contains('\\') || path.starts_with('/') || path.starts_with('.')
+    {
         return Err("invalid image path".into());
     }
-    Ok(())
+    let mut parts = path.split('/');
+    let folder = parts.next().ok_or_else(|| "invalid image path".to_string())?;
+    let file = parts.next().ok_or_else(|| "invalid image path".to_string())?;
+    if parts.next().is_some() || folder.is_empty() || file.is_empty() {
+        return Err("invalid image path".into());
+    }
+    if folder == "images" || folder.ends_with(".assets") {
+        Ok(())
+    } else {
+        Err("invalid image path".into())
+    }
 }
 
 fn image_path_for_rel(app: &AppHandle, note_id: u32, rel: &str) -> Result<PathBuf, String> {
-    validate_image_rel(rel)?;
+    let rel = parse_markdown_image_dest(rel);
+    validate_image_rel(&rel)?;
+    let mut parts = rel.split('/');
+    let folder = parts.next().unwrap();
+    let file = parts.next().unwrap();
     let base = note_dir(app, note_id)?;
-    let path = base.join(rel);
-    let images_dir = base.join("images");
-    if !path.starts_with(&images_dir) {
+    let folder_path = base.join(folder);
+    let path = folder_path.join(file);
+    if !path.starts_with(&folder_path) {
         return Err("invalid image path".into());
+    }
+    if path.exists() {
+        return Ok(path);
+    }
+    // Legacy APPDATA layout: notes/{id}/{folder}/{file}
+    if let Ok(legacy_base) = legacy_note_dir(app, note_id) {
+        let legacy = legacy_base.join(folder).join(file);
+        if legacy.exists() {
+            return Ok(legacy);
+        }
     }
     Ok(path)
 }
@@ -215,10 +313,13 @@ fn image_path_for_rel(app: &AppHandle, note_id: u32, rel: &str) -> Result<PathBu
 fn extract_image_refs(content: &str) -> HashSet<String> {
     let mut refs = HashSet::new();
     let mut rest = content;
-    while let Some(idx) = rest.find("](images/") {
-        let sub = &rest[idx + 2..];
+    while let Some(start) = rest.find("](") {
+        let sub = &rest[start + 2..];
         if let Some(end) = sub.find(')') {
-            refs.insert(sub[..end].to_string());
+            let candidate = parse_markdown_image_dest(&sub[..end]);
+            if validate_image_rel(&candidate).is_ok() {
+                refs.insert(candidate);
+            }
             rest = &sub[end..];
         } else {
             break;
@@ -227,30 +328,97 @@ fn extract_image_refs(content: &str) -> HashSet<String> {
     refs
 }
 
+fn rewrite_content_asset_folders(content: &str, note_id: u32) -> String {
+    let target = assets_folder_name("", note_id);
+    let mut out = content.to_string();
+    // Replace any `….assets/` image folder with the stable note-{id}.assets/
+    let re_parts: Vec<String> = extract_image_refs(content)
+        .into_iter()
+        .filter_map(|rel| {
+            let folder = rel.split('/').next()?.to_string();
+            if folder != target && folder.ends_with(".assets") {
+                Some(folder)
+            } else {
+                None
+            }
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    for folder in re_parts {
+        out = out.replace(&format!("{folder}/"), &format!("{target}/"));
+        out = out.replace(&format!("<{folder}/"), &format!("<{target}/"));
+    }
+    out
+}
+
 fn sync_note_images(app: &AppHandle, note_id: u32, content: &str) -> Result<(), String> {
     let referenced = extract_image_refs(content);
-    let dir = note_images_dir(app, note_id)?;
-    if !dir.exists() {
+    let base = note_dir(app, note_id)?;
+    if !base.exists() {
         return Ok(());
     }
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(&base).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
-        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+        let ft = entry.file_type().map_err(|e| e.to_string())?;
+        if !ft.is_dir() {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let rel = format!("images/{}", name);
-        if !referenced.contains(&rel) {
-            let _ = fs::remove_file(entry.path());
+        let folder_name = entry.file_name().to_string_lossy().to_string();
+        let expected = assets_folder_name("", note_id);
+        if folder_name != "images" && folder_name != expected && !folder_name.ends_with(".assets") {
+            continue;
+        }
+        // Only prune this note's asset folder (and legacy images under legacy dir separately).
+        if folder_name != expected && folder_name != "images" {
+            continue;
+        }
+        for file in fs::read_dir(entry.path()).map_err(|e| e.to_string())? {
+            let file = file.map_err(|e| e.to_string())?;
+            if !file.file_type().map_err(|e| e.to_string())?.is_file() {
+                continue;
+            }
+            let name = file.file_name().to_string_lossy().to_string();
+            let rel = format!("{folder_name}/{name}");
+            if !referenced.contains(&rel) {
+                let _ = fs::remove_file(file.path());
+            }
         }
     }
     Ok(())
 }
 
 fn delete_note_assets(app: &AppHandle, note_id: u32) -> Result<(), String> {
-    let dir = note_dir(app, note_id)?;
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    let root = arknote_root(app)?;
+    let assets = root.join(assets_folder_name("", note_id));
+    if assets.exists() {
+        fs::remove_dir_all(&assets).map_err(|e| e.to_string())?;
+    }
+    if let Ok(legacy) = legacy_note_dir(app, note_id) {
+        if legacy.exists() {
+            let _ = fs::remove_dir_all(legacy);
+        }
+    }
+    Ok(())
+}
+
+/// Remove the per-note markdown + assets under Documents/ArkNote.
+fn delete_note_document(app: &AppHandle, note_id: u32) -> Result<(), String> {
+    let md = note_markdown_path(app, note_id)?;
+    if md.exists() {
+        fs::remove_file(&md).map_err(|e| e.to_string())?;
+    }
+    delete_note_assets(app, note_id)
+}
+
+fn sync_note_markdown_file(app: &AppHandle, note: &Note) -> Result<(), String> {
+    let path = note_markdown_path(app, note.id)?;
+    fs::write(path, &note.content).map_err(|e| e.to_string())
+}
+
+fn sync_all_note_markdown_files(app: &AppHandle, state: &StoredNotes) -> Result<(), String> {
+    for note in state.notes.iter().chain(state.closed_notes.iter()) {
+        sync_note_markdown_file(app, note)?;
     }
     Ok(())
 }
@@ -263,54 +431,48 @@ fn sanitize_image_ext(ext: &str) -> String {
     }
 }
 
-fn image_mime_for_path(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_lowercase())
-        .as_deref()
-    {
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("bmp") => "image/bmp",
-        _ => "image/png",
-    }
-}
-
 fn new_image_filename(ext: &str) -> String {
     let ts = chrono_timestamp_ms();
     format!("img_{}.{}", ts, sanitize_image_ext(ext))
 }
 
-fn read_note_image_data_url(
-    app: &AppHandle,
-    note_id: u32,
-    relative_path: &str,
-) -> Result<String, String> {
-    let path = image_path_for_rel(app, note_id, relative_path)?;
-    if !path.exists() {
-        return Err(format!("image not found: {relative_path}"));
+fn empty_notes_state() -> StoredNotes {
+    StoredNotes {
+        version: 1,
+        notes: vec![],
+        saved_at_map: HashMap::new(),
+        closed_notes: vec![],
     }
-    let data = fs::read(&path).map_err(|e| e.to_string())?;
-    let mime = image_mime_for_path(&path);
-    let encoded = STANDARD.encode(data);
-    Ok(format!("data:{mime};base64,{encoded}"))
 }
 
-fn load_notes(app: &AppHandle) -> Result<StoredNotes, String> {
+fn load_notes_from_disk(app: &AppHandle) -> Result<StoredNotes, String> {
     let path = notes_path(app)?;
-    if !path.exists() {
-        return Ok(normalize_state(StoredNotes {
-            version: 1,
-            notes: vec![],
-            saved_at_map: HashMap::new(),
-            closed_notes: vec![],
-        }));
+    if path.exists() {
+        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut state: StoredNotes = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        normalize_note_asset_paths(&mut state);
+        return Ok(normalize_state(state));
     }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let state: StoredNotes = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    Ok(normalize_state(state))
+
+    // One-time migrate from legacy %APPDATA%\com.texttop.app\notes.json
+    if let Ok(legacy) = legacy_app_data_notes_json(app) {
+        if legacy.exists() {
+            let raw = fs::read_to_string(&legacy).map_err(|e| e.to_string())?;
+            let mut state: StoredNotes = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            normalize_note_asset_paths(&mut state);
+            let state = normalize_state(state);
+            persist_notes_file(app, &state, MarkdownSync::All)?;
+            return Ok(state);
+        }
+    }
+
+    Ok(normalize_state(empty_notes_state()))
+}
+
+fn normalize_note_asset_paths(state: &mut StoredNotes) {
+    for note in state.notes.iter_mut().chain(state.closed_notes.iter_mut()) {
+        note.content = rewrite_content_asset_folders(&note.content, note.id);
+    }
 }
 
 fn normalize_state(mut state: StoredNotes) -> StoredNotes {
@@ -326,19 +488,109 @@ fn normalize_state(mut state: StoredNotes) -> StoredNotes {
     state
 }
 
-fn save_notes(app: &AppHandle, state: &StoredNotes, emit_changed: bool) -> Result<(), String> {
+fn persist_notes_file(
+    app: &AppHandle,
+    state: &StoredNotes,
+    markdown: MarkdownSync,
+) -> Result<(), String> {
     let path = notes_path(app)?;
-    let normalized = normalize_state(state.clone());
-    let raw = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())?;
-    if emit_changed {
-        let _ = app.emit("notes-changed", ());
+    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &raw).map_err(|e| e.to_string())?;
+    // Windows cannot rename over an existing file; replace explicitly.
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    match markdown {
+        MarkdownSync::None => {}
+        MarkdownSync::One(note_id) => {
+            if let Some(note) = state
+                .notes
+                .iter()
+                .chain(state.closed_notes.iter())
+                .find(|note| note.id == note_id)
+            {
+                let _ = sync_note_markdown_file(app, note);
+            }
+        }
+        MarkdownSync::All => {
+            let _ = sync_all_note_markdown_files(app, state);
+        }
     }
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum MarkdownSync {
+    /// Index only (geometry / pin / theme); markdown bodies unchanged.
+    None,
+    /// Sync a single note's sibling `.md`.
+    One(u32),
+    /// Sync every known note markdown (migrate / bootstrap).
+    All,
+}
+
+fn notes_snapshot(app: &AppHandle) -> Result<StoredNotes, String> {
+    let store = app.state::<NotesStore>();
+    let guard = store
+        .0
+        .lock()
+        .map_err(|_| "notes store lock poisoned".to_string())?;
+    Ok(guard.clone())
+}
+
+fn with_notes_mut<F, R>(
+    app: &AppHandle,
+    emit_changed: bool,
+    markdown: MarkdownSync,
+    f: F,
+) -> Result<R, String>
+where
+    F: FnOnce(&mut StoredNotes) -> Result<R, String>,
+{
+    let store = app.state::<NotesStore>();
+    let mut guard = store
+        .0
+        .lock()
+        .map_err(|_| "notes store lock poisoned".to_string())?;
+    let result = f(&mut guard)?;
+    let normalized = normalize_state(guard.clone());
+    *guard = normalized;
+    persist_notes_file(app, &guard, markdown)?;
+    if emit_changed {
+        let _ = app.emit("notes-changed", ());
+    }
+    Ok(result)
+}
+
 fn has_note_content(note: &Note) -> bool {
     !note.content.trim().is_empty()
+}
+
+/// Close a note inside an in-memory state. Returns whether assets should be deleted
+/// (empty note discarded) and whether the note existed.
+fn close_note_in_state(state: &mut StoredNotes, note_id: u32) -> CloseNoteOutcome {
+    let Some(index) = state.notes.iter().position(|note| note.id == note_id) else {
+        return CloseNoteOutcome::NotFound;
+    };
+
+    let note = state.notes.remove(index);
+    if has_note_content(&note) {
+        state.closed_notes.retain(|item| item.id != note_id);
+        state.closed_notes.insert(0, note);
+        CloseNoteOutcome::MovedToClosed
+    } else {
+        state.saved_at_map.remove(&note_id);
+        CloseNoteOutcome::DiscardedEmpty
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CloseNoteOutcome {
+    NotFound,
+    MovedToClosed,
+    DiscardedEmpty,
 }
 
 fn destroy_note_window(app: &AppHandle, note_id: u32) {
@@ -412,6 +664,10 @@ fn apply_note_window_spec(window: &WebviewWindow, spec: &NoteWindowSpec) -> taur
     Ok(())
 }
 
+fn app_window_icon() -> tauri::image::Image<'static> {
+    include_image!("icons/32x32.png")
+}
+
 fn open_or_update_note_window(app: &AppHandle, spec: &NoteWindowSpec) -> tauri::Result<()> {
     let label = note_label(spec.id);
     let (x, y) = clamp_to_primary_monitor(app, spec.x, spec.y, spec.width, spec.height);
@@ -427,13 +683,15 @@ fn open_or_update_note_window(app: &AppHandle, spec: &NoteWindowSpec) -> tauri::
     let window = WebviewWindowBuilder::new(app, &label, note_window_url())
         .title(&spec.title)
         .inner_size(spec.width, spec.height)
+        .min_inner_size(250.0, 310.0)
         .position(x, y)
         .decorations(false)
         .transparent(true)
         .shadow(false)
         .skip_taskbar(true)
-        .resizable(false)
+        .resizable(true)
         .always_on_top(spec.is_pinned)
+        .icon(app_window_icon())?
         .build()?;
 
     let _ = window.show();
@@ -467,28 +725,44 @@ fn next_note_id(state: &StoredNotes) -> u32 {
         + 1
 }
 
-fn create_new_note(app: &AppHandle) -> Result<(), String> {
-    let mut state = load_notes(app)?;
-    let id = next_note_id(&state);
-    let slot = state.notes.len();
-    let note = default_note(id, app, slot)?;
-    state.notes.push(note.clone());
-    save_notes(app, &state, false)?;
-    let spec = note_to_spec(&note);
+fn open_note_window_deferred(app: &AppHandle, spec: NoteWindowSpec) {
     let app = app.clone();
+    // Window creation must not run inline on the command worker thread —
+    // that deadlocks WebView2 / freezes the caller (seen on restore from list).
     tauri::async_runtime::spawn(async move {
         let _ = open_or_update_note_window(&app, &spec);
     });
+}
+
+fn create_new_note(app: &AppHandle) -> Result<(), String> {
+    let note = with_notes_mut(app, false, MarkdownSync::None, |state| {
+        let id = next_note_id(state);
+        let slot = state.notes.len();
+        let note = default_note(id, app, slot)?;
+        state.notes.push(note.clone());
+        Ok(note)
+    })?;
+    let _ = sync_note_markdown_file(app, &note);
+    open_note_window_deferred(app, note_to_spec(&note));
     Ok(())
 }
 
 fn bootstrap_windows(app: &AppHandle) -> Result<(), String> {
-    let mut state = load_notes(app)?;
-    if state.notes.is_empty() {
-        state.notes.push(default_note(1, app, 0)?);
-        save_notes(app, &state, false)?;
-    }
-    for note in &state.notes.clone() {
+    let notes = {
+        let store = app.state::<NotesStore>();
+        let mut guard = store
+            .0
+            .lock()
+            .map_err(|_| "notes store lock poisoned".to_string())?;
+        if guard.notes.is_empty() {
+            guard.notes.push(default_note(1, app, 0)?);
+            let normalized = normalize_state(guard.clone());
+            *guard = normalized;
+            persist_notes_file(app, &guard, MarkdownSync::All)?;
+        }
+        guard.notes.clone()
+    };
+    for note in &notes {
         open_or_update_note_window(app, &note_to_spec(note)).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -536,102 +810,136 @@ fn emit_toggle_app_theme(app: &AppHandle) {
 
 #[tauri::command]
 fn load_notes_cmd(app: AppHandle) -> Result<StoredNotes, String> {
-    load_notes(&app)
+    notes_snapshot(&app)
 }
 
 #[tauri::command]
 fn patch_note_cmd(app: AppHandle, note_id: u32, patch: NotePatch) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    let Some(note) = state.notes.iter_mut().find(|note| note.id == note_id) else {
-        return Ok(());
+    let markdown = if patch.content.is_some() {
+        MarkdownSync::One(note_id)
+    } else {
+        MarkdownSync::None
     };
-    apply_note_patch(note, &patch);
-    if patch.content.is_some() {
-        let _ = sync_note_images(&app, note_id, &note.content);
+    let content_to_sync = with_notes_mut(&app, false, markdown, |state| {
+        let Some(note) = state.notes.iter_mut().find(|note| note.id == note_id) else {
+            return Ok(None);
+        };
+        apply_note_patch(note, &patch);
+        // Content-like edits update saved_at so the UI can leave "尚未保存".
+        if patch.content.is_some()
+            || patch.title.is_some()
+            || patch.theme.is_some()
+            || patch.is_preview.is_some()
+        {
+            state.saved_at_map.insert(note_id, chrono_timestamp_ms());
+        }
+        if patch.content.is_some() {
+            Ok(Some(note.content.clone()))
+        } else {
+            Ok(None)
+        }
+    })?;
+    if let Some(content) = content_to_sync {
+        let _ = sync_note_images(&app, note_id, &content);
     }
-    save_notes(&app, &state, false)
+    Ok(())
 }
 
 #[tauri::command]
 fn close_note_data_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    let Some(index) = state.notes.iter().position(|note| note.id == note_id) else {
-        destroy_note_window(&app, note_id);
-        return Ok(());
+    let outcome = {
+        let store = app.state::<NotesStore>();
+        let mut guard = store
+            .0
+            .lock()
+            .map_err(|_| "notes store lock poisoned".to_string())?;
+        let outcome = close_note_in_state(&mut guard, note_id);
+        if matches!(outcome, CloseNoteOutcome::NotFound) {
+            drop(guard);
+            destroy_note_window(&app, note_id);
+            return Ok(());
+        }
+        let normalized = normalize_state(guard.clone());
+        *guard = normalized;
+        // Bodies already on disk from editorial patches; index-only write is enough.
+        persist_notes_file(&app, &guard, MarkdownSync::None)?;
+        let _ = app.emit("notes-changed", ());
+        outcome
     };
-
-    let note = state.notes.remove(index);
-    if has_note_content(&note) {
-        state.closed_notes.retain(|item| item.id != note_id);
-        state.closed_notes.insert(0, note);
-    } else {
-        state.saved_at_map.remove(&note_id);
-        let _ = delete_note_assets(&app, note_id);
+    if matches!(outcome, CloseNoteOutcome::DiscardedEmpty) {
+        let _ = delete_note_document(&app, note_id);
     }
-
-    save_notes(&app, &state, true)?;
     Ok(())
 }
 
 #[tauri::command]
 fn restore_note_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    let Some(index) = state
-        .closed_notes
-        .iter()
-        .position(|note| note.id == note_id)
-    else {
-        return Ok(());
-    };
-
-    let note = state.closed_notes.remove(index);
-    state.notes.push(note.clone());
-    save_notes(&app, &state, true)?;
-    open_or_update_note_window(&app, &note_to_spec(&note)).map_err(|e| e.to_string())
+    let note = with_notes_mut(&app, true, MarkdownSync::None, |state| {
+        let Some(index) = state
+            .closed_notes
+            .iter()
+            .position(|note| note.id == note_id)
+        else {
+            return Ok(None);
+        };
+        let note = state.closed_notes.remove(index);
+        state.notes.push(note.clone());
+        Ok(Some(note))
+    })?;
+    if let Some(note) = note {
+        open_note_window_deferred(&app, note_to_spec(&note));
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_closed_note_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    state.closed_notes.retain(|note| note.id != note_id);
-    state.saved_at_map.remove(&note_id);
-    let _ = delete_note_assets(&app, note_id);
-    save_notes(&app, &state, true)
+    with_notes_mut(&app, true, MarkdownSync::None, |state| {
+        state.closed_notes.retain(|note| note.id != note_id);
+        state.saved_at_map.remove(&note_id);
+        Ok(())
+    })?;
+    // List delete removes both the markdown document and image assets.
+    let _ = delete_note_document(&app, note_id);
+    Ok(())
 }
 
 #[tauri::command]
 fn apply_theme_cmd(app: AppHandle, theme: String) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    for note in &mut state.notes {
-        note.theme = theme.clone();
-    }
-    save_notes(&app, &state, true)
+    with_notes_mut(&app, true, MarkdownSync::None, |state| {
+        for note in &mut state.notes {
+            note.theme = theme.clone();
+        }
+        Ok(())
+    })
 }
 
 #[tauri::command]
 fn cycle_theme_cmd(app: AppHandle) -> Result<(), String> {
     let themes = ["business", "eyecare", "dark"];
-    let mut state = load_notes(&app)?;
-    if state.notes.is_empty() {
-        return Ok(());
-    }
-    let current = state.notes[0].theme.as_str();
-    let current_idx = themes.iter().position(|theme| *theme == current).unwrap_or(0);
-    let next_theme = themes[(current_idx + 1) % themes.len()];
-    for note in &mut state.notes {
-        note.theme = next_theme.to_string();
-    }
-    save_notes(&app, &state, true)
+    with_notes_mut(&app, true, MarkdownSync::None, |state| {
+        if state.notes.is_empty() {
+            return Ok(());
+        }
+        let current = state.notes[0].theme.as_str();
+        let current_idx = themes.iter().position(|theme| *theme == current).unwrap_or(0);
+        let next_theme = themes[(current_idx + 1) % themes.len()];
+        for note in &mut state.notes {
+            note.theme = next_theme.to_string();
+        }
+        Ok(())
+    })
 }
 
 #[tauri::command]
 fn touch_saved_at_cmd(app: AppHandle, note_id: u32) -> Result<(), String> {
-    let mut state = load_notes(&app)?;
-    if !state.notes.iter().any(|note| note.id == note_id) {
-        return Ok(());
-    }
-    state.saved_at_map.insert(note_id, chrono_timestamp_ms());
-    save_notes(&app, &state, false)
+    with_notes_mut(&app, false, MarkdownSync::None, |state| {
+        if !state.notes.iter().any(|note| note.id == note_id) {
+            return Ok(());
+        }
+        state.saved_at_map.insert(note_id, chrono_timestamp_ms());
+        Ok(())
+    })
 }
 
 fn chrono_timestamp_ms() -> u64 {
@@ -641,32 +949,48 @@ fn chrono_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn validate_note_image_bytes(data: &[u8]) -> Result<(), String> {
+    const MAX_NOTE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+    if data.is_empty() {
+        return Err("empty image data".into());
+    }
+    if data.len() > MAX_NOTE_IMAGE_BYTES {
+        return Err("image too large".into());
+    }
+    Ok(())
+}
+
+fn save_note_image_bytes(
+    app: &AppHandle,
+    note_id: u32,
+    data: &[u8],
+    extension: Option<&str>,
+    note_title: &str,
+) -> Result<String, String> {
+    validate_note_image_bytes(data)?;
+    let ext = extension.unwrap_or("png");
+    let filename = new_image_filename(ext);
+    let folder = assets_folder_name(note_title, note_id);
+    let dir = note_images_dir_for_title(app, note_id, note_title)?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&filename);
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    Ok(format!("{folder}/{filename}"))
+}
+
 #[tauri::command]
 fn save_note_image_cmd(
     app: AppHandle,
     note_id: u32,
-    data: Vec<u8>,
+    data_base64: String,
     extension: Option<String>,
+    note_title: Option<String>,
 ) -> Result<String, String> {
-    if data.is_empty() {
-        return Err("empty image data".into());
-    }
-    let ext = extension.as_deref().unwrap_or("png");
-    let filename = new_image_filename(ext);
-    let dir = note_images_dir(&app, note_id)?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&filename);
-    fs::write(path, data).map_err(|e| e.to_string())?;
-    Ok(format!("images/{}", filename))
-}
-
-#[tauri::command]
-fn read_note_image_data_url_cmd(
-    app: AppHandle,
-    note_id: u32,
-    relative_path: String,
-) -> Result<String, String> {
-    read_note_image_data_url(&app, note_id, &relative_path)
+    let data = STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| format!("invalid image base64: {e}"))?;
+    let title = note_title.unwrap_or_default();
+    save_note_image_bytes(&app, note_id, &data, extension.as_deref(), &title)
 }
 
 #[tauri::command]
@@ -684,7 +1008,8 @@ fn resolve_note_image_path_cmd(
 
 #[tauri::command]
 fn open_note_window(app: AppHandle, note: NoteWindowSpec) -> Result<(), String> {
-    open_or_update_note_window(&app, &note).map_err(|e| e.to_string())
+    open_note_window_deferred(&app, note);
+    Ok(())
 }
 
 #[tauri::command]
@@ -733,6 +1058,77 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn open_url_cmd(url: String) -> Result<(), String> {
+    open_https_url(&url)
+}
+
+fn open_https_url(url: &str) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("only http(s) urls are allowed".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err("open url unsupported on this platform".into())
+}
+
+fn open_about_window_deferred(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        if let Some(existing) = app.get_webview_window("about") {
+            let _ = existing.set_focus();
+            return;
+        }
+        let builder = WebviewWindowBuilder::new(&app, "about", note_window_url())
+            .title("关于 ArkNote")
+            .inner_size(380.0, 460.0)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(true)
+            .skip_taskbar(false)
+            .visible(true)
+            .icon(app_window_icon());
+        match builder {
+            Ok(builder) => match builder.build() {
+                Ok(window) => {
+                    let _ = window.center();
+                    let _ = window.set_focus();
+                }
+                Err(err) => {
+                    eprintln!("[arknote] open about window failed: {err}");
+                }
+            },
+            Err(err) => {
+                eprintln!("[arknote] about window icon failed: {err}");
+            }
+        }
+    });
+}
+
 const TRAY_ID: &str = "main-tray";
 
 fn build_main_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
@@ -750,6 +1146,7 @@ fn build_main_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<taur
         .build()?;
     let settings_menu = build_settings_menu(app)?;
     let toggle_dark = MenuItemBuilder::with_id("toggle-dark", "切换暗色模式").build(app)?;
+    let about = MenuItemBuilder::with_id("about", "关于 ArkNote").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出应用").build(app)?;
 
     MenuBuilder::new(app)
@@ -759,6 +1156,7 @@ fn build_main_tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<taur
         .item(&settings_menu)
         .item(&toggle_dark)
         .separator()
+        .item(&about)
         .item(&quit)
         .build()
 }
@@ -777,7 +1175,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     let _tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
-        .tooltip("便签")
+        .tooltip("ArkNote")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -810,6 +1208,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = rebuild_tray_menu(app);
             }
             "toggle-dark" => emit_toggle_app_theme(app),
+            "about" => open_about_window_deferred(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -843,7 +1242,7 @@ fn register_shortcut(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_notes_cmd,
@@ -862,8 +1261,8 @@ pub fn run() {
             get_settings_cmd,
             set_last_note_close_cmd,
             save_note_image_cmd,
-            read_note_image_data_url_cmd,
             resolve_note_image_path_cmd,
+            open_url_cmd,
             quit_app,
         ])
         .setup(|app| {
@@ -874,6 +1273,9 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            let initial = load_notes_from_disk(app.handle()).unwrap_or_else(|_| empty_notes_state());
+            app.manage(NotesStore(Mutex::new(initial)));
 
             build_tray(app.handle())?;
             register_shortcut(app.handle());
@@ -892,4 +1294,182 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_note(id: u32, content: &str) -> Note {
+        Note {
+            id,
+            title: format!("便签 #{id}"),
+            content: content.to_string(),
+            position: NotePoint { x: 10.0, y: 20.0 },
+            size: NoteSize {
+                width: 300.0,
+                height: 400.0,
+            },
+            is_pinned: false,
+            theme: "business".into(),
+            is_preview: false,
+        }
+    }
+
+    #[test]
+    fn sequential_patches_on_different_notes_both_retained() {
+        // Models the mutex path: mutate shared state in sequence (as concurrent
+        // commands serialize on the lock) instead of stale whole-file rewrites.
+        let mut state = empty_notes_state();
+        state.notes.push(sample_note(1, "a"));
+        state.notes.push(sample_note(2, "b"));
+
+        {
+            let note = state.notes.iter_mut().find(|n| n.id == 1).unwrap();
+            apply_note_patch(
+                note,
+                &NotePatch {
+                    title: None,
+                    content: Some("alpha".into()),
+                    position: None,
+                    size: None,
+                    is_pinned: None,
+                    theme: None,
+                    is_preview: None,
+                },
+            );
+        }
+        {
+            let note = state.notes.iter_mut().find(|n| n.id == 2).unwrap();
+            apply_note_patch(
+                note,
+                &NotePatch {
+                    title: None,
+                    content: Some("beta".into()),
+                    position: None,
+                    size: None,
+                    is_pinned: None,
+                    theme: None,
+                    is_preview: None,
+                },
+            );
+        }
+
+        assert_eq!(
+            state.notes.iter().find(|n| n.id == 1).unwrap().content,
+            "alpha"
+        );
+        assert_eq!(
+            state.notes.iter().find(|n| n.id == 2).unwrap().content,
+            "beta"
+        );
+    }
+
+    #[test]
+    fn close_note_with_content_moves_to_closed_list() {
+        let mut state = empty_notes_state();
+        state.notes.push(sample_note(1, "keep me"));
+        assert_eq!(
+            close_note_in_state(&mut state, 1),
+            CloseNoteOutcome::MovedToClosed
+        );
+        assert!(state.notes.is_empty());
+        assert_eq!(state.closed_notes.len(), 1);
+        assert_eq!(state.closed_notes[0].content, "keep me");
+    }
+
+    #[test]
+    fn close_empty_note_is_discarded() {
+        let mut state = empty_notes_state();
+        state.notes.push(sample_note(1, "   "));
+        state.saved_at_map.insert(1, 123);
+        assert_eq!(
+            close_note_in_state(&mut state, 1),
+            CloseNoteOutcome::DiscardedEmpty
+        );
+        assert!(state.notes.is_empty());
+        assert!(state.closed_notes.is_empty());
+        assert!(!state.saved_at_map.contains_key(&1));
+    }
+
+    #[test]
+    fn normalize_state_drops_duplicate_and_active_from_closed() {
+        let mut state = empty_notes_state();
+        state.notes.push(sample_note(1, "a"));
+        state.notes.push(sample_note(1, "dup"));
+        state.closed_notes.push(sample_note(1, "old"));
+        state.closed_notes.push(sample_note(2, "c"));
+        state = normalize_state(state);
+        assert_eq!(state.notes.len(), 1);
+        assert_eq!(state.notes[0].content, "a");
+        assert_eq!(state.closed_notes.len(), 1);
+        assert_eq!(state.closed_notes[0].id, 2);
+    }
+
+    #[test]
+    fn validate_note_image_bytes_rejects_empty_and_oversized() {
+        assert!(validate_note_image_bytes(&[]).is_err());
+        assert!(validate_note_image_bytes(&[1, 2, 3]).is_ok());
+        let huge = vec![0u8; 8 * 1024 * 1024 + 1];
+        assert_eq!(
+            validate_note_image_bytes(&huge).unwrap_err(),
+            "image too large"
+        );
+    }
+
+    #[test]
+    fn editorial_patch_fields_should_touch_saved_at() {
+        // Mirrors patch_note_cmd: content/title/theme/preview update saved_at.
+        let mut saved_at_map = HashMap::<u32, u64>::new();
+        let note_id = 1u32;
+        let patch = NotePatch {
+            title: Some("t".into()),
+            content: None,
+            position: None,
+            size: None,
+            is_pinned: None,
+            theme: None,
+            is_preview: None,
+        };
+        if patch.content.is_some()
+            || patch.title.is_some()
+            || patch.theme.is_some()
+            || patch.is_preview.is_some()
+        {
+            saved_at_map.insert(note_id, 42);
+        }
+        assert_eq!(saved_at_map.get(&note_id), Some(&42));
+    }
+
+    #[test]
+    fn assets_folder_uses_stable_note_id_stem() {
+        assert_eq!(assets_folder_name("便签 #1", 1), "note-1.assets");
+        assert_eq!(assets_folder_name("a/b:c", 2), "note-2.assets");
+        assert_eq!(assets_folder_name("   ", 3), "note-3.assets");
+        assert!(validate_image_rel("note-1.assets/img_1.png").is_ok());
+        assert!(validate_image_rel("便签 #1.assets/img_1.png").is_ok());
+        assert!(validate_image_rel("images/img_1.png").is_ok());
+        assert!(validate_image_rel("../x.assets/a.png").is_err());
+    }
+
+    #[test]
+    fn rewrite_content_asset_folders_normalizes_title_assets() {
+        let raw = "![image](<便签 #1.assets/img_1.png>)\n![x](old.assets/a.png)";
+        let next = rewrite_content_asset_folders(raw, 1);
+        assert!(next.contains("note-1.assets/img_1.png"));
+        assert!(next.contains("note-1.assets/a.png"));
+        assert!(!next.contains("便签 #1.assets"));
+    }
+
+    #[test]
+    fn parse_markdown_image_dest_strips_angle_brackets() {
+        assert_eq!(
+            parse_markdown_image_dest("<note-1.assets/img.png>"),
+            "note-1.assets/img.png"
+        );
+        assert_eq!(
+            parse_markdown_image_dest("note-1.assets/img.png"),
+            "note-1.assets/img.png"
+        );
+    }
 }

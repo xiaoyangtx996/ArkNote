@@ -69,6 +69,11 @@ description = "Allow quit_app command."
 commands.allow = ["quit_app"]
 
 [[permission]]
+identifier = "allow-open-url"
+description = "Allow open_url_cmd command."
+commands.allow = ["open_url_cmd"]
+
+[[permission]]
 identifier = "allow-save-note-image"
 description = "Allow save_note_image_cmd command."
 commands.allow = ["save_note_image_cmd"]
@@ -77,11 +82,6 @@ commands.allow = ["save_note_image_cmd"]
 identifier = "allow-resolve-note-image-path"
 description = "Allow resolve_note_image_path_cmd command."
 commands.allow = ["resolve_note_image_path_cmd"]
-
-[[permission]]
-identifier = "allow-read-note-image-data-url"
-description = "Allow read_note_image_data_url_cmd command."
-commands.allow = ["read_note_image_data_url_cmd"]
 
 [[permission]]
 identifier = "allow-get-settings"

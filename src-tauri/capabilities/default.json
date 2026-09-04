@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for TextTop",
+  "description": "Default permissions for ArkNote",
   "windows": ["*"],
   "permissions": [
     "core:default",
@@ -27,8 +27,8 @@
     "allow-get-settings",
     "allow-set-last-note-close",
     "allow-save-note-image",
-    "allow-read-note-image-data-url",
     "allow-resolve-note-image-path",
+    "allow-open-url",
     "allow-quit-app"
   ]
 }

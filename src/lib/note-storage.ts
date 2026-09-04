@@ -16,7 +16,7 @@ export interface StoredNotes {
   closedNotes?: Note[]
 }
 
-const STORAGE_KEY = 'text-top-notes'
+const STORAGE_KEY = 'arknote-notes'
 const SCHEMA_VERSION = 1 as const
 
 function isValidNote(value: unknown): value is Note {
@@ -65,10 +65,43 @@ function defaultNoteTitle(id: number): string {
   return `便签 #${id}`
 }
 
+import { toCanonicalMarkdown } from '@/lib/note-images'
+
 export function normalizeNote(note: Note): Note {
   return {
     ...note,
     title: note.title?.trim() || defaultNoteTitle(note.id),
+    // Drop any historically embedded data:/asset: image URLs from the body.
+    content: toCanonicalMarkdown(note.content ?? ''),
+  }
+}
+
+/** Shared close/discard rule: only non-whitespace content is kept in recycle. */
+export function hasNoteContent(note: Pick<Note, 'content'>): boolean {
+  return note.content.trim().length > 0
+}
+
+export function getDefaultNoteScreenPosition(id: number): { x: number; y: number } {
+  const offset = (id % 8) * 28
+  const width = typeof window !== 'undefined' ? (window.screen?.availWidth ?? 1920) : 1920
+  const height = typeof window !== 'undefined' ? (window.screen?.availHeight ?? 1080) : 1080
+  return {
+    x: Math.max(40, width / 2 - 150 + offset),
+    y: Math.max(40, height / 2 - 100 + offset),
+  }
+}
+
+/** Factory for both desktop hydrate defaults and browser-preview notes. */
+export function createDefaultNote(id: number): Note {
+  return {
+    id,
+    title: defaultNoteTitle(id),
+    content: '',
+    position: getDefaultNoteScreenPosition(id),
+    size: { width: 300, height: 400 },
+    isPinned: false,
+    theme: 'business',
+    isPreview: false,
   }
 }
 

@@ -1,8 +1,8 @@
 [package]
-name = "text-top"
+name = "arknote"
 version = "1.0.0"
-description = "A desktop sticky notes application"
-authors = ["TextTop"]
+description = "ArkNote desktop sticky notes"
+authors = ["ArkNote"]
 edition = "2021"
 rust-version = "1.77.2"
 

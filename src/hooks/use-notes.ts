@@ -1,40 +1,24 @@
+/**
+ * Browser-preview notes hook (`npm run dev` → App.tsx).
+ * Desktop Tauri windows use `use-single-note` + Rust storage instead.
+ * Do not teach this hook new desktop-only behavior.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { NOTE_THEMES, type NoteThemeId } from '@/lib/note-themes'
-import { loadNotes, saveNotes, type Note } from '@/lib/note-storage'
+import {
+  createDefaultNote,
+  hasNoteContent,
+  loadNotes,
+  saveNotes,
+  type Note,
+} from '@/lib/note-storage'
 import { formatSavedTime } from '@/lib/format-time'
 
 export { formatSavedTime }
 
-function getDefaultNoteScreenPosition(id: number) {
-  const offset = (id % 8) * 28
-  const width = window.screen?.availWidth ?? 1920
-  const height = window.screen?.availHeight ?? 1080
-  return {
-    x: Math.max(40, width / 2 - 150 + offset),
-    y: Math.max(40, height / 2 - 100 + offset),
-  }
-}
-
-function createNote(id: number): Note {
-  return {
-    id,
-    title: `便签 #${id}`,
-    content: '',
-    position: getDefaultNoteScreenPosition(id),
-    size: { width: 300, height: 400 },
-    isPinned: false,
-    theme: 'business',
-    isPreview: false,
-  }
-}
-
-function hasNoteContent(note: Note): boolean {
-  return note.content.trim().length > 0
-}
-
 function initNotesState() {
   const stored = loadNotes()
-  const notes = stored && stored.notes.length > 0 ? stored.notes : [createNote(1)]
+  const notes = stored && stored.notes.length > 0 ? stored.notes : [createDefaultNote(1)]
   const closedNotes = stored?.closedNotes ?? []
   const savedAtMap = stored?.savedAtMap ?? {}
   const allIds = [...notes, ...closedNotes].map(note => note.id)
@@ -112,7 +96,7 @@ export function useNotes() {
     setNotes(prev => {
       newId = prev.length > 0 ? Math.max(...prev.map(n => n.id)) + 1 : nextIdRef.current
       nextIdRef.current = newId + 1
-      return [...prev, createNote(newId)]
+      return [...prev, createDefaultNote(newId)]
     })
     return newId
   }, [])

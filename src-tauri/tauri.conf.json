@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "便签",
+  "productName": "ArkNote",
   "version": "1.0.0",
-  "identifier": "com.texttop.app",
+  "identifier": "com.arknote.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run icons && vite build"
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [],
@@ -15,7 +15,14 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/com.texttop.app/**"]
+        "scope": [
+          "$DOCUMENT/**",
+          "$DOCUMENT/ArkNote/**",
+          "$APPDATA/**",
+          "$APPDATA/com.arknote.app/**",
+          "$APPDATA/com.texttop.app/**",
+          "$RESOURCE/**"
+        ]
       }
     }
   },

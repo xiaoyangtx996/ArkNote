@@ -3,17 +3,13 @@ import { Rnd } from 'react-rnd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Card, CardHeader } from './ui/card'
 import { Button } from './ui/button'
-import { Textarea } from './ui/textarea'
-import { Tabs, TabsList, TabsTrigger } from './ui/tabs'
 import { X, Pin, PinOff, PlusCircle, Copy, Check } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { cn } from '../lib/utils'
 import { formatSavedTime } from '@/lib/format-time'
 import type { Note } from '@/lib/note-storage'
 import { NoteListMenu } from './note-list-menu'
-import { NoteMarkdown } from './note-markdown'
-import { buildImageMarkdown, saveNoteImageFromClipboard } from '@/lib/note-images'
-import { isTauri } from '@/lib/tauri'
+import { NoteLiveEditor } from './note-live-editor'
 
 interface NoteWindowProps {
   note: Note
@@ -44,19 +40,12 @@ export function NoteWindow({
   onRestoreNote,
   onDeleteClosedNote,
 }: NoteWindowProps) {
-  const [activeTab, setActiveTab] = useState<string>(note.isPreview ? 'preview' : 'edit')
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [draftTitle, setDraftTitle] = useState(note.title)
   const [copied, setCopied] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const pendingSelectionRef = useRef<number | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const charCount = note.content.replace(/\s/g, '').length
-
-  useEffect(() => {
-    setActiveTab(note.isPreview ? 'preview' : 'edit')
-  }, [note.isPreview])
 
   useEffect(() => {
     if (!isEditingTitle) {
@@ -83,46 +72,6 @@ export function NoteWindow({
     setIsEditingTitle(false)
   }
 
-  useEffect(() => {
-    if (pendingSelectionRef.current === null || !textareaRef.current) return
-    const pos = pendingSelectionRef.current
-    pendingSelectionRef.current = null
-    textareaRef.current.focus()
-    textareaRef.current.setSelectionRange(pos, pos)
-  }, [note.content])
-
-  const insertAtCursor = (insert: string) => {
-    const el = textareaRef.current
-    if (!el) {
-      onUpdate({ content: note.content + insert })
-      return
-    }
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const newContent = note.content.slice(0, start) + insert + note.content.slice(end)
-    pendingSelectionRef.current = start + insert.length
-    onUpdate({ content: newContent })
-  }
-
-  const handleContentPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!isTauri()) return
-    const items = e.clipboardData.items
-    for (const item of items) {
-      if (!item.type.startsWith('image/')) continue
-      e.preventDefault()
-      const file = item.getAsFile()
-      if (!file) return
-      const relativePath = await saveNoteImageFromClipboard(note.id, file)
-      if (!relativePath) return
-      insertAtCursor(buildImageMarkdown(relativePath))
-      return
-    }
-  }
-
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onUpdate({ content: e.target.value })
-  }
-
   const togglePin = () => {
     onUpdate({ isPinned: !note.isPinned })
   }
@@ -143,11 +92,6 @@ export function NoteWindow({
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
     }
   }, [])
-
-  const handleTabChange = (value: string) => {
-    setActiveTab(value)
-    onUpdate({ isPreview: value === 'preview' })
-  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isEditingTitle) return
@@ -181,7 +125,18 @@ export function NoteWindow({
     void getCurrentWindow().startDragging()
   }
 
-  const startWindowResize = (e: React.MouseEvent, direction: 'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West') => {
+  const startWindowResize = (
+    e: React.MouseEvent,
+    direction:
+      | 'East'
+      | 'North'
+      | 'NorthEast'
+      | 'NorthWest'
+      | 'South'
+      | 'SouthEast'
+      | 'SouthWest'
+      | 'West',
+  ) => {
     if (variant !== 'standalone' || e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
@@ -190,11 +145,24 @@ export function NoteWindow({
 
   const resizeHandles =
     variant === 'standalone' ? (
-      <div
-        className="pointer-events-auto absolute bottom-0 right-0 z-20 h-4 w-4 cursor-se-resize"
-        onMouseDown={e => startWindowResize(e, 'SouthEast')}
-        aria-hidden
-      />
+      <>
+        <div
+          className="pointer-events-auto absolute bottom-0 right-0 z-[60] h-5 w-5 cursor-se-resize"
+          onMouseDown={e => startWindowResize(e, 'SouthEast')}
+          title="拖动缩放"
+          aria-label="拖动右下角缩放窗口"
+        />
+        <div
+          className="pointer-events-auto absolute bottom-0 left-5 right-5 z-[55] h-2 cursor-s-resize"
+          onMouseDown={e => startWindowResize(e, 'South')}
+          aria-hidden
+        />
+        <div
+          className="pointer-events-auto absolute top-8 bottom-5 right-0 z-[55] w-2 cursor-e-resize"
+          onMouseDown={e => startWindowResize(e, 'East')}
+          aria-hidden
+        />
+      </>
     ) : null
 
   const headerActions =
@@ -292,7 +260,7 @@ export function NoteWindow({
               <X size={14} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">关闭便签</TooltipContent>
+          <TooltipContent side="bottom">关闭</TooltipContent>
         </Tooltip>
       </div>
     )
@@ -303,16 +271,17 @@ export function NoteWindow({
       onMouseDown={() => onActivate?.()}
       onKeyDown={handleKeyDown}
       className={cn(
-        'relative flex h-full min-h-0 flex-col overflow-hidden rounded-lg border shadow-none drop-shadow-xl',
+        // Header menus need overflow-visible; clip only the editor pane below.
+        'relative flex h-full min-h-0 flex-col overflow-visible rounded-lg border shadow-none drop-shadow-xl',
         getThemeStyles(),
         'border-gray-200 dark:border-gray-700',
       )}
     >
-        {resizeHandles}
-        <CardHeader className="relative z-10 shrink-0 flex flex-row items-center justify-between space-y-0 border-b gap-1 p-2">
-          <TooltipProvider delayDuration={800} skipDelayDuration={0}>
-            <div className="flex flex-1 items-center gap-1 min-w-0 w-full">
-              <div className="flex items-center gap-1 text-xs font-medium min-w-0 max-w-[45%] shrink-0">
+      {resizeHandles}
+      <CardHeader className="relative z-30 shrink-0 flex flex-row items-center justify-between space-y-0 overflow-visible border-b gap-1 p-2">
+        <TooltipProvider delayDuration={800} skipDelayDuration={0}>
+          <div className="flex flex-1 items-center gap-1 min-w-0 w-full overflow-visible">
+            <div className="flex items-center gap-1 text-xs font-medium min-w-0 max-w-[38%] shrink">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -325,11 +294,7 @@ export function NoteWindow({
                     className="shrink-0 rounded p-0.5 hover:bg-accent transition-colors"
                     aria-label={note.isPinned ? '取消置顶' : '置顶便签'}
                   >
-                    {note.isPinned ? (
-                      <PinOff size={14} />
-                    ) : (
-                      <Pin size={14} />
-                    )}
+                    {note.isPinned ? <PinOff size={14} /> : <Pin size={14} />}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
@@ -337,40 +302,40 @@ export function NoteWindow({
                 </TooltipContent>
               </Tooltip>
               {isEditingTitle ? (
-              <input
-                ref={titleInputRef}
-                type="text"
-                value={draftTitle}
-                onChange={e => setDraftTitle(e.target.value)}
-                onBlur={commitTitle}
-                onKeyDown={e => {
-                  e.stopPropagation()
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    commitTitle()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    cancelTitleEdit()
-                  }
-                }}
-                onMouseDown={e => e.stopPropagation()}
-                onDoubleClick={e => e.stopPropagation()}
-                className="note-title-input h-5 w-full min-w-0 rounded-sm border border-input bg-background px-1 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-            ) : (
-              <span
-                className="truncate cursor-text select-none"
-                title={`${note.title}（双击编辑）`}
-                onMouseDown={variant === 'standalone' ? startWindowDrag : undefined}
-                onDoubleClick={e => {
-                  e.stopPropagation()
-                  setDraftTitle(note.title)
-                  setIsEditingTitle(true)
-                }}
-              >
-                {note.title}
-              </span>
-            )}
+                <input
+                  ref={titleInputRef}
+                  type="text"
+                  value={draftTitle}
+                  onChange={e => setDraftTitle(e.target.value)}
+                  onBlur={commitTitle}
+                  onKeyDown={e => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      commitTitle()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      cancelTitleEdit()
+                    }
+                  }}
+                  onMouseDown={e => e.stopPropagation()}
+                  onDoubleClick={e => e.stopPropagation()}
+                  className="note-title-input h-5 w-full min-w-0 rounded-sm border border-input bg-background px-1 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+              ) : (
+                <span
+                  className="truncate cursor-text select-none"
+                  title={`${note.title}（双击编辑）`}
+                  onMouseDown={variant === 'standalone' ? startWindowDrag : undefined}
+                  onDoubleClick={e => {
+                    e.stopPropagation()
+                    setDraftTitle(note.title)
+                    setIsEditingTitle(true)
+                  }}
+                >
+                  {note.title}
+                </span>
+              )}
             </div>
             <div
               className="note-drag-handle flex-1 h-6 min-w-[12px] cursor-move"
@@ -378,47 +343,31 @@ export function NoteWindow({
               aria-hidden
             />
             {headerActions}
-            </div>
-          </TooltipProvider>
-        </CardHeader>
-
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-2 mt-2 grid shrink-0 grid-cols-2">
-            <TabsTrigger value="edit">编辑</TabsTrigger>
-            <TabsTrigger value="preview">预览</TabsTrigger>
-          </TabsList>
-
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            {activeTab === 'edit' ? (
-              <div className="absolute inset-0 flex flex-col p-2">
-                <Textarea
-                  ref={textareaRef}
-                  value={note.content}
-                  onChange={handleContentChange}
-                  onPaste={handleContentPaste}
-                  className="min-h-0 flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
-                  placeholder="开始输入…可直接粘贴图片"
-                />
-              </div>
-            ) : (
-              <div className="absolute inset-0 overflow-y-auto p-4">
-                <NoteMarkdown noteId={note.id} content={note.content} />
-              </div>
-            )}
           </div>
-        </Tabs>
+        </TooltipProvider>
+      </CardHeader>
 
-        <div className="shrink-0 border-t p-2 text-xs text-gray-500 dark:text-gray-400 flex justify-between items-center">
-          <div>{charCount} 字</div>
-          <div>{savedAt ? `上次保存: ${formatSavedTime(savedAt)}` : '尚未保存'}</div>
-        </div>
-      </Card>
+      <div className="relative min-h-0 flex-1 overflow-hidden p-1">
+        <NoteLiveEditor
+          noteId={note.id}
+          noteTitle={note.title}
+          content={note.content}
+          themeId={note.theme}
+          onChange={next => onUpdate({ content: next })}
+        />
+      </div>
+
+      <div className="shrink-0 border-t p-2 text-xs text-gray-500 dark:text-gray-400 flex justify-between items-center">
+        <div>{charCount} 字</div>
+        <div>{savedAt ? `上次保存: ${formatSavedTime(savedAt)}` : '尚未保存'}</div>
+      </div>
+    </Card>
   )
 
   if (variant === 'standalone') {
     return (
-      <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ zIndex }}>
-        <div className="relative h-full">{card}</div>
+      <div className="relative h-full w-full overflow-visible rounded-lg" style={{ zIndex }}>
+        <div className="relative h-full overflow-visible">{card}</div>
       </div>
     )
   }
@@ -428,17 +377,20 @@ export function NoteWindow({
       position={note.position}
       size={note.size}
       minWidth={250}
-      minHeight={200}
+      minHeight={310}
       bounds="parent"
       dragHandleClassName="note-drag-handle"
-      cancel="textarea, button, input, [role='tab'], [role='tablist'], [data-radix-popper-content-wrapper], .note-title-input"
+      cancel="textarea, button, input, .vditor, .note-live-editor, .note-title-input, [data-radix-popper-content-wrapper]"
       onDragStart={() => onActivate?.()}
       onDragStop={(_e, d) => {
         onUpdate({ position: { x: d.x, y: d.y } })
       }}
       onResizeStop={(_e, _direction, ref, _delta, position) => {
         onUpdate({
-          size: { width: Number.parseInt(ref.style.width, 10), height: Number.parseInt(ref.style.height, 10) },
+          size: {
+            width: Number.parseInt(ref.style.width, 10),
+            height: Number.parseInt(ref.style.height, 10),
+          },
           position,
         })
       }}

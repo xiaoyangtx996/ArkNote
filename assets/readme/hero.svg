@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 1200 160" role="img" aria-labelledby="title desc">
+  <title id="title">ArkNote</title>
+  <desc id="desc">Tray-resident Markdown sticky notes for Windows.</desc>
+  <rect width="1200" height="160" rx="24" fill="#EFF6FF"/>
+  <rect x="20" y="20" width="1160" height="120" rx="18" fill="#FFFFFF" stroke="#BFDBFE"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+    <text x="56" y="78" fill="#0F172A" font-size="36" font-weight="700">ArkNote</text>
+    <text x="56" y="116" fill="#475569" font-size="22">托盘常驻 · Markdown · 本地 Documents/ArkNote</text>
+  </g>
+</svg>

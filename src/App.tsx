@@ -1,3 +1,7 @@
+/**
+ * Browser-only UI shell for `npm run dev`.
+ * Desktop runtime never mounts this: `main.tsx` routes Tauri `note-*` windows to NoteApp.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { NoteWindow } from './components/note-window'
 import { ThemeProvider } from './components/theme-provider'
