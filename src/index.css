@@ -93,7 +93,8 @@
 .note-live-editor .vditor-content,
 .note-live-editor .vditor-ir {
   background: transparent !important;
-  padding: 0.25rem 0.5rem !important;
+  /* Keep left text inset; flush right so scrollbar hugs the edge */
+  padding: 0.25rem 0 0.25rem 0.5rem !important;
 }
 
 .note-live-editor .vditor-reset {
@@ -106,3 +107,147 @@
 .note-live-editor .vditor-ir__preview {
   background: transparent !important;
 }
+
+/*
+ * Editor scrollbars: hidden until hover/focus; thin + flush to the right edge.
+ * Other UI (e.g. closed-note list) keeps a light always-available thin bar.
+ */
+.note-live-editor,
+.note-live-editor .vditor,
+.note-live-editor .vditor-content,
+.note-live-editor .vditor-ir,
+.note-live-editor .vditor-reset {
+  scrollbar-width: none;
+}
+
+.note-live-editor:hover,
+.note-live-editor:focus-within,
+.note-live-editor:hover .vditor,
+.note-live-editor:focus-within .vditor,
+.note-live-editor:hover .vditor-content,
+.note-live-editor:focus-within .vditor-content,
+.note-live-editor:hover .vditor-ir,
+.note-live-editor:focus-within .vditor-ir,
+.note-live-editor:hover .vditor-reset,
+.note-live-editor:focus-within .vditor-reset {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.16) transparent;
+}
+
+.note-live-editor::-webkit-scrollbar,
+.note-live-editor .vditor::-webkit-scrollbar,
+.note-live-editor .vditor-content::-webkit-scrollbar,
+.note-live-editor .vditor-ir::-webkit-scrollbar,
+.note-live-editor .vditor-reset::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.note-live-editor:hover::-webkit-scrollbar,
+.note-live-editor:focus-within::-webkit-scrollbar,
+.note-live-editor:hover .vditor::-webkit-scrollbar,
+.note-live-editor:focus-within .vditor::-webkit-scrollbar,
+.note-live-editor:hover .vditor-content::-webkit-scrollbar,
+.note-live-editor:focus-within .vditor-content::-webkit-scrollbar,
+.note-live-editor:hover .vditor-ir::-webkit-scrollbar,
+.note-live-editor:focus-within .vditor-ir::-webkit-scrollbar,
+.note-live-editor:hover .vditor-reset::-webkit-scrollbar,
+.note-live-editor:focus-within .vditor-reset::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.note-live-editor:hover::-webkit-scrollbar-thumb,
+.note-live-editor:focus-within::-webkit-scrollbar-thumb,
+.note-live-editor:hover .vditor::-webkit-scrollbar-thumb,
+.note-live-editor:focus-within .vditor::-webkit-scrollbar-thumb,
+.note-live-editor:hover .vditor-content::-webkit-scrollbar-thumb,
+.note-live-editor:focus-within .vditor-content::-webkit-scrollbar-thumb,
+.note-live-editor:hover .vditor-ir::-webkit-scrollbar-thumb,
+.note-live-editor:focus-within .vditor-ir::-webkit-scrollbar-thumb,
+.note-live-editor:hover .vditor-reset::-webkit-scrollbar-thumb,
+.note-live-editor:focus-within .vditor-reset::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.14);
+  border-radius: 999px;
+}
+
+.note-live-editor:hover::-webkit-scrollbar-thumb:hover,
+.note-live-editor:focus-within::-webkit-scrollbar-thumb:hover,
+.note-live-editor:hover .vditor::-webkit-scrollbar-thumb:hover,
+.note-live-editor:focus-within .vditor::-webkit-scrollbar-thumb:hover,
+.note-live-editor:hover .vditor-content::-webkit-scrollbar-thumb:hover,
+.note-live-editor:focus-within .vditor-content::-webkit-scrollbar-thumb:hover,
+.note-live-editor:hover .vditor-ir::-webkit-scrollbar-thumb:hover,
+.note-live-editor:focus-within .vditor-ir::-webkit-scrollbar-thumb:hover,
+.note-live-editor:hover .vditor-reset::-webkit-scrollbar-thumb:hover,
+.note-live-editor:focus-within .vditor-reset::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.28);
+}
+
+.note-live-editor::-webkit-scrollbar-button,
+.note-live-editor *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.note-live-editor::-webkit-scrollbar-track,
+.note-live-editor *::-webkit-scrollbar-track,
+.note-live-editor::-webkit-scrollbar-corner,
+.note-live-editor *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.dark .note-live-editor:hover,
+.dark .note-live-editor:focus-within,
+.dark .note-live-editor:hover .vditor,
+.dark .note-live-editor:focus-within .vditor,
+.dark .note-live-editor:hover .vditor-content,
+.dark .note-live-editor:focus-within .vditor-content,
+.dark .note-live-editor:hover .vditor-ir,
+.dark .note-live-editor:focus-within .vditor-ir,
+.dark .note-live-editor:hover .vditor-reset,
+.dark .note-live-editor:focus-within .vditor-reset {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.dark .note-live-editor:hover::-webkit-scrollbar-thumb,
+.dark .note-live-editor:focus-within::-webkit-scrollbar-thumb,
+.dark .note-live-editor:hover .vditor::-webkit-scrollbar-thumb,
+.dark .note-live-editor:focus-within .vditor::-webkit-scrollbar-thumb,
+.dark .note-live-editor:hover .vditor-content::-webkit-scrollbar-thumb,
+.dark .note-live-editor:focus-within .vditor-content::-webkit-scrollbar-thumb,
+.dark .note-live-editor:hover .vditor-ir::-webkit-scrollbar-thumb,
+.dark .note-live-editor:focus-within .vditor-ir::-webkit-scrollbar-thumb,
+.dark .note-live-editor:hover .vditor-reset::-webkit-scrollbar-thumb,
+.dark .note-live-editor:focus-within .vditor-reset::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Fallback thin bars for non-editor scroll areas (menus, etc.) */
+.note-list-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+.note-list-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.note-list-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.14);
+  border-radius: 999px;
+}
+
+.note-list-scroll::-webkit-scrollbar-track,
+.note-list-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+

@@ -61,7 +61,7 @@ export function NoteListMenu({ closedNotes, onRestore, onDelete }: NoteListMenuP
           className={cn(
             'absolute right-0 top-full z-[100000] mt-1',
             'w-[min(13.5rem,calc(100vw-1.25rem))]',
-            'max-h-[min(11rem,calc(100vh-5.5rem))] overflow-y-auto overflow-x-hidden',
+            'note-list-scroll max-h-[min(11rem,calc(100vh-5.5rem))] overflow-y-auto overflow-x-hidden',
             'rounded-md border bg-popover p-1 text-popover-foreground shadow-md',
           )}
           onPointerDown={e => e.stopPropagation()}

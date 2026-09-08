@@ -3,7 +3,7 @@ import { Rnd } from 'react-rnd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Card, CardHeader } from './ui/card'
 import { Button } from './ui/button'
-import { X, Pin, PinOff, PlusCircle, Copy, Check } from 'lucide-react'
+import { X, Pin, PinOff, PlusCircle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { cn } from '../lib/utils'
 import { formatSavedTime } from '@/lib/format-time'
@@ -17,6 +17,9 @@ interface NoteWindowProps {
   savedAt?: number
   closedNotes: Note[]
   variant?: 'embedded' | 'standalone'
+  /** Pinned edge-dock bookmark state (desktop only). */
+  edgeDocked?: boolean
+  edgeDockSide?: 'left' | 'right' | 'top' | 'bottom' | null
   onUpdate: (updates: Partial<Note>) => void
   onClose: () => void
   onNewNote?: () => void
@@ -26,12 +29,45 @@ interface NoteWindowProps {
   onDeleteClosedNote: (noteId: number) => void
 }
 
+function BookmarkTab({
+  title,
+  edge,
+}: {
+  title: string
+  edge: 'left' | 'right' | 'top' | 'bottom'
+}) {
+  return (
+    <div
+      className={cn(
+        'flex h-full w-full flex-row items-center gap-1.5 overflow-hidden border border-black/[0.08] bg-white/95 px-2 select-none dark:border-white/10 dark:bg-neutral-900/90',
+        edge === 'left' && 'rounded-none rounded-r-md border-l-0',
+        edge === 'right' && 'rounded-none rounded-l-md border-r-0',
+        edge === 'top' && 'rounded-none rounded-b-md border-t-0',
+        edge === 'bottom' && 'rounded-none rounded-t-md border-b-0',
+      )}
+      title={title}
+    >
+      <img
+        src={`${import.meta.env.BASE_URL}mark.png`}
+        alt=""
+        draggable={false}
+        className="h-5 w-5 shrink-0 object-contain opacity-90"
+      />
+      <span className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-tight text-neutral-700 dark:text-neutral-200">
+        {title}
+      </span>
+    </div>
+  )
+}
+
 export function NoteWindow({
   note,
   zIndex,
   savedAt,
   closedNotes,
   variant = 'embedded',
+  edgeDocked = false,
+  edgeDockSide = null,
   onUpdate,
   onClose,
   onNewNote,
@@ -42,9 +78,7 @@ export function NoteWindow({
 }: NoteWindowProps) {
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [draftTitle, setDraftTitle] = useState(note.title)
-  const [copied, setCopied] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const charCount = note.content.replace(/\s/g, '').length
 
   useEffect(() => {
@@ -75,23 +109,6 @@ export function NoteWindow({
   const togglePin = () => {
     onUpdate({ isPinned: !note.isPinned })
   }
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(note.content)
-      setCopied(true)
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // clipboard unavailable
-    }
-  }
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
-    }
-  }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isEditingTitle) return
@@ -181,19 +198,6 @@ export function NoteWindow({
         >
           <PlusCircle size={14} />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          title={copied ? '已复制' : '复制内容'}
-          onPointerDown={e => e.stopPropagation()}
-          onClick={e => {
-            e.stopPropagation()
-            void handleCopy()
-          }}
-        >
-          {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-        </Button>
         <NoteListMenu
           closedNotes={closedNotes}
           onRestore={onRestoreNote}
@@ -228,20 +232,6 @@ export function NoteWindow({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">新建便签</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onMouseDown={e => e.stopPropagation()}
-              onClick={() => void handleCopy()}
-            >
-              {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{copied ? '已复制' : '复制内容'}</TooltipContent>
         </Tooltip>
         <NoteListMenu
           closedNotes={closedNotes}
@@ -347,7 +337,7 @@ export function NoteWindow({
         </TooltipProvider>
       </CardHeader>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden p-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden pt-1 pl-1 pb-1 pr-0">
         <NoteLiveEditor
           noteId={note.id}
           noteTitle={note.title}
@@ -365,6 +355,18 @@ export function NoteWindow({
   )
 
   if (variant === 'standalone') {
+    if (edgeDocked && edgeDockSide) {
+      return (
+        <div
+          className="relative h-full w-full overflow-hidden"
+          style={{ zIndex }}
+          onMouseDown={() => onActivate?.()}
+        >
+          <BookmarkTab title={note.title} edge={edgeDockSide} />
+        </div>
+      )
+    }
+
     return (
       <div className="relative h-full w-full overflow-visible rounded-lg" style={{ zIndex }}>
         <div className="relative h-full overflow-visible">{card}</div>

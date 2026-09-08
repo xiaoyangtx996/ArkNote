@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Vditor from 'vditor'
 import 'vditor/dist/index.css'
 import {
@@ -11,6 +11,9 @@ import {
   toCanonicalMarkdown,
 } from '@/lib/note-images'
 import { cn } from '@/lib/utils'
+
+const SELECTION_COPY_SETTLE_MS = 80
+const COPY_HINT_MS = 1200
 
 interface NoteLiveEditorProps {
   noteId: number
@@ -77,6 +80,33 @@ async function rewriteEditorImageDom(
   )
 }
 
+function selectionTextInside(root: HTMLElement): string {
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return ''
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return ''
+  return sel.toString()
+}
+
+function selectionEndPoint(root: HTMLElement): { left: number; top: number } | null {
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return null
+  const end = range.cloneRange()
+  end.collapse(false)
+  let rect = end.getBoundingClientRect()
+  if (rect.width === 0 && rect.height === 0) {
+    const full = range.getBoundingClientRect()
+    rect = full
+  }
+  const rootRect = root.getBoundingClientRect()
+  return {
+    left: Math.max(0, rect.right - rootRect.left + 4),
+    top: Math.max(0, rect.top - rootRect.top - 2),
+  }
+}
+
 /**
  * Typora-like IR: markdown stores relative `{name}.assets/...` paths only.
  * Preview uses asset-protocol file URLs in the DOM, never base64 in the document.
@@ -90,6 +120,7 @@ export function NoteLiveEditor({
   onChange,
 }: NoteLiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const vditorRef = useRef<Vditor | null>(null)
   const srcMapRef = useRef<Record<string, string>>({})
   const contentRef = useRef(content)
@@ -97,11 +128,79 @@ export function NoteLiveEditor({
   const applyingRef = useRef(false)
   const noteIdRef = useRef(noteId)
   const noteTitleRef = useRef(noteTitle)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const lastCopiedRef = useRef('')
+  const selectingRef = useRef(false)
+  const [copyHint, setCopyHint] = useState<{ left: number; top: number } | null>(null)
 
   contentRef.current = content
   onChangeRef.current = onChange
   noteIdRef.current = noteId
   noteTitleRef.current = noteTitle
+
+  // Drag-select → mouseup → copy; show 「已复制」at selection end.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const showHintAtSelection = () => {
+      const point = selectionEndPoint(root)
+      if (!point) return
+      setCopyHint(point)
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current)
+      hintTimerRef.current = setTimeout(() => setCopyHint(null), COPY_HINT_MS)
+    }
+
+    const copySelection = () => {
+      const text = selectionTextInside(root).trim()
+      if (!text || text === lastCopiedRef.current) return
+      void navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          lastCopiedRef.current = text
+          showHintAtSelection()
+        })
+        .catch(() => {
+          // clipboard unavailable
+        })
+    }
+
+    const scheduleCopy = () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(copySelection, SELECTION_COPY_SETTLE_MS)
+    }
+
+    const onPointerDown = () => {
+      selectingRef.current = true
+      lastCopiedRef.current = ''
+      setCopyHint(null)
+    }
+
+    const onPointerUp = () => {
+      if (!selectingRef.current) return
+      selectingRef.current = false
+      scheduleCopy()
+    }
+
+    const onSelectionChange = () => {
+      if (!selectionTextInside(root)) {
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+        lastCopiedRef.current = ''
+      }
+    }
+
+    root.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => {
+      root.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('selectionchange', onSelectionChange)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -256,11 +355,21 @@ export function NoteLiveEditor({
 
   return (
     <div
-      className={cn('note-live-editor h-full min-h-0 w-full overflow-hidden', className)}
+      ref={rootRef}
+      className={cn('note-live-editor relative h-full min-h-0 w-full overflow-hidden', className)}
       onMouseDown={e => e.stopPropagation()}
       onPointerDown={e => e.stopPropagation()}
     >
       <div ref={hostRef} className="h-full w-full" />
+      {copyHint ? (
+        <span
+          className="pointer-events-none absolute z-50 -translate-y-1/2 rounded border border-black/[0.06] bg-neutral-100/95 px-1.5 py-0.5 text-[10px] font-medium text-neutral-500 shadow-sm backdrop-blur-sm"
+          style={{ left: copyHint.left, top: copyHint.top + 8 }}
+          role="status"
+        >
+          已复制
+        </span>
+      ) : null}
     </div>
   )
 }

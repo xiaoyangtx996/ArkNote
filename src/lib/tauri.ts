@@ -60,6 +60,49 @@ export async function setNoteAlwaysOnTop(noteId: number, isPinned: boolean) {
   await invokeSafe('set_note_always_on_top', { noteId, isPinned })
 }
 
+export interface EdgeDockPlan {
+  edge: 'left' | 'right' | 'top' | 'bottom'
+  restX: number
+  restY: number
+  restW: number
+  restH: number
+  hideX: number
+  hideY: number
+  hideW: number
+  hideH: number
+}
+
+export async function evaluateNoteEdgeDock(noteId: number): Promise<EdgeDockPlan | null> {
+  if (!isTauri()) return null
+  return invokeSafe<EdgeDockPlan | null>('evaluate_note_edge_dock', { noteId })
+}
+
+export async function setNoteWindowPosition(noteId: number, x: number, y: number) {
+  if (!isTauri()) return
+  await invokeSafe('set_note_window_position', { noteId, x, y })
+}
+
+export async function animateNoteWindowPosition(
+  noteId: number,
+  toX: number,
+  toY: number,
+  durationMs = 320,
+  toW?: number,
+  toH?: number,
+  edge?: EdgeDockPlan['edge'],
+) {
+  if (!isTauri()) return
+  await invokeSafe('animate_note_window_position', {
+    noteId,
+    toX,
+    toY,
+    durationMs,
+    toW: toW ?? null,
+    toH: toH ?? null,
+    edge: edge ?? null,
+  })
+}
+
 export async function createNewNote() {
   if (!isTauri()) return
   await invoke('create_note_cmd')
@@ -70,6 +113,7 @@ export type LastNoteCloseAction = 'keep-tray' | 'quit-app' | 'confirm-quit'
 export interface AppSettings {
   version: number
   lastNoteClose: LastNoteCloseAction
+  newNotePinned: boolean
 }
 
 export async function getAppSettings(): Promise<AppSettings | null> {
@@ -80,6 +124,11 @@ export async function getAppSettings(): Promise<AppSettings | null> {
 export async function setLastNoteClose(action: LastNoteCloseAction) {
   if (!isTauri()) return
   await invokeSafe('set_last_note_close_cmd', { action })
+}
+
+export async function setNewNotePinned(pinned: boolean) {
+  if (!isTauri()) return
+  await invokeSafe('set_new_note_pinned_cmd', { pinned })
 }
 
 export async function quitApp() {

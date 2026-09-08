@@ -19,6 +19,7 @@ import {
   quitApp,
 } from '@/lib/tauri'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useEdgeDock } from '@/hooks/use-edge-dock'
 
 export function useSingleNote(noteId: number) {
   const [ready, setReady] = useState(!isTauri())
@@ -31,6 +32,15 @@ export function useSingleNote(noteId: number) {
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const closingRef = useRef(false)
   const creatingRef = useRef(false)
+  const suppressPositionPersistRef = useRef(false)
+
+  const isPinned = note?.isPinned ?? false
+  const {
+    docked,
+    edge,
+    tryDockAfterMove,
+    onUserActivity,
+  } = useEdgeDock(noteId, isPinned, suppressPositionPersistRef)
 
   const refresh = useCallback(() => {
     const state = readNotesState()
@@ -107,9 +117,11 @@ export function useSingleNote(noteId: number) {
     const appWindow = getCurrentWindow()
 
     const unlistenMoved = appWindow.onMoved(() => {
+      if (suppressPositionPersistRef.current) return
       if (moveTimerRef.current) clearTimeout(moveTimerRef.current)
       moveTimerRef.current = setTimeout(() => {
         void (async () => {
+          if (suppressPositionPersistRef.current) return
           const [outer, factor] = await Promise.all([
             appWindow.outerPosition(),
             appWindow.scaleFactor(),
@@ -120,15 +132,20 @@ export function useSingleNote(noteId: number) {
           const next = { ...noteRef.current, position }
           noteRef.current = next
           setNote(next)
-          void patchNoteInStore(noteId, { position })
+          await patchNoteInStore(noteId, { position })
+          if (noteRef.current?.isPinned) {
+            void tryDockAfterMove()
+          }
         })()
       }, 200)
     })
 
     const unlistenResized = appWindow.onResized(() => {
+      if (suppressPositionPersistRef.current) return
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
         void (async () => {
+          if (suppressPositionPersistRef.current) return
           const [inner, factor] = await Promise.all([
             appWindow.innerSize(),
             appWindow.scaleFactor(),
@@ -159,7 +176,7 @@ export function useSingleNote(noteId: number) {
       void unlistenMoved.then(unlisten => unlisten())
       void unlistenResized.then(unlisten => unlisten())
     }
-  }, [ready, note, noteId])
+  }, [ready, noteId, tryDockAfterMove])
 
   const handleUpdate = useCallback(
     (updates: Partial<Note>) => {
@@ -170,6 +187,11 @@ export function useSingleNote(noteId: number) {
 
       if (updates.isPinned !== undefined) {
         void setNoteAlwaysOnTop(noteId, next.isPinned)
+        if (!next.isPinned) {
+          suppressPositionPersistRef.current = false
+        } else {
+          void tryDockAfterMove()
+        }
       }
       if (updates.size || updates.title) {
         void updateNoteWindow(next)
@@ -190,7 +212,7 @@ export function useSingleNote(noteId: number) {
           })
       }, 500)
     },
-    [noteId],
+    [noteId, tryDockAfterMove],
   )
 
   const handleClose = useCallback(async () => {
@@ -280,6 +302,9 @@ export function useSingleNote(noteId: number) {
     note,
     closedNotes,
     savedAt,
+    edgeDocked: docked,
+    edgeDockSide: edge,
+    onEdgeDockActivity: onUserActivity,
     handleUpdate,
     handleClose,
     handleSaveNow,

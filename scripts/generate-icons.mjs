@@ -102,6 +102,11 @@ async function buildLogoPng() {
     .png()
     .toFile(path.join(publicDir, 'logo.png'))
   console.log('Wrote branding/logo.png + public/logo.png (mark + wordmark)')
+
+  // Bookmark dock / compact UI: smallest pure mark (46×46)
+  const mark46 = path.join(layersDir, 'arknote-46x46.png')
+  await fs.promises.copyFile(mark46, path.join(publicDir, 'mark.png'))
+  console.log('Wrote public/mark.png from arknote-46x46.png')
 }
 
 // App mark master for tauri icon / exe

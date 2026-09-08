@@ -1,6 +1,6 @@
 {
   "name": "arknote",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ArkNote — desktop sticky notes with always-on-top",
   "scripts": {
     "dev": "npm run vditor:copy && vite",

@@ -21,7 +21,7 @@ export function AboutApp() {
         className="h-40 w-auto max-w-[280px] object-contain"
         draggable={false}
       />
-      <p className="text-sm text-slate-500">桌面便签 · v1.0.0</p>
+      <p className="text-sm text-slate-500">桌面便签 · v1.0.1</p>
       <button
         type="button"
         onClick={openGithub}

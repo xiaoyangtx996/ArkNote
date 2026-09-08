@@ -13,6 +13,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+mod edge_dock;
+
 /// In-memory notes authority. All RMW goes through this lock so concurrent
 /// window patches cannot clobber each other via stale whole-file rewrites.
 struct NotesStore(Mutex<StoredNotes>);
@@ -83,6 +85,8 @@ impl Default for LastNoteCloseAction {
 struct AppSettings {
     version: u32,
     last_note_close: LastNoteCloseAction,
+    #[serde(default)]
+    new_note_pinned: bool,
 }
 
 impl Default for AppSettings {
@@ -90,6 +94,7 @@ impl Default for AppSettings {
         Self {
             version: 1,
             last_note_close: LastNoteCloseAction::KeepTray,
+            new_note_pinned: false,
         }
     }
 }
@@ -169,10 +174,20 @@ fn build_settings_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Submenu<ta
         ),
     )
     .build(app)?;
+    let new_note_pinned = MenuItemBuilder::with_id(
+        "setting-new-note-pinned",
+        format!(
+            "{}新建便签默认置顶",
+            if settings.new_note_pinned { "✓ " } else { "  " }
+        ),
+    )
+    .build(app)?;
     SubmenuBuilder::new(app, "设置")
         .item(&keep_tray)
         .item(&quit_on_close)
         .item(&confirm_quit)
+        .separator()
+        .item(&new_note_pinned)
         .build()
 }
 
@@ -636,7 +651,7 @@ fn default_note(id: u32, app: &AppHandle, slot: usize) -> Result<Note, String> {
         content: String::new(),
         position: NotePoint { x, y },
         size: NoteSize { width, height },
-        is_pinned: false,
+        is_pinned: load_settings(app).new_note_pinned,
         theme: "business".into(),
         is_preview: false,
     })
@@ -1036,6 +1051,168 @@ fn set_note_always_on_top(app: AppHandle, note_id: u32, is_pinned: bool) -> Resu
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EdgeDockPlanDto {
+    edge: String,
+    rest_x: f64,
+    rest_y: f64,
+    rest_w: f64,
+    rest_h: f64,
+    hide_x: f64,
+    hide_y: f64,
+    hide_w: f64,
+    hide_h: f64,
+}
+
+fn monitor_work_rect_for_window(window: &WebviewWindow) -> Result<edge_dock::Rect, String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor".to_string())?;
+    let scale = monitor.scale_factor();
+    let size = monitor.size().to_logical::<f64>(scale);
+    let origin = monitor.position().to_logical::<f64>(scale);
+    Ok(edge_dock::Rect {
+        x: origin.x,
+        y: origin.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+fn window_outer_rect(window: &WebviewWindow) -> Result<edge_dock::Rect, String> {
+    let factor = window.scale_factor().map_err(|e| e.to_string())?;
+    let pos = window
+        .outer_position()
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(factor);
+    let size = window
+        .outer_size()
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(factor);
+    Ok(edge_dock::Rect {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+#[tauri::command]
+fn evaluate_note_edge_dock(app: AppHandle, note_id: u32) -> Result<Option<EdgeDockPlanDto>, String> {
+    let Some(window) = app.get_webview_window(&note_label(note_id)) else {
+        return Ok(None);
+    };
+    let win = window_outer_rect(&window)?;
+    let work = monitor_work_rect_for_window(&window)?;
+    let Some(plan) = edge_dock::plan_dock(win, work) else {
+        return Ok(None);
+    };
+    let edge = match plan.edge {
+        edge_dock::DockEdge::Left => "left",
+        edge_dock::DockEdge::Right => "right",
+        edge_dock::DockEdge::Top => "top",
+        edge_dock::DockEdge::Bottom => "bottom",
+    };
+    Ok(Some(EdgeDockPlanDto {
+        edge: edge.into(),
+        rest_x: plan.rest_x,
+        rest_y: plan.rest_y,
+        rest_w: plan.rest_w,
+        rest_h: plan.rest_h,
+        hide_x: plan.hide_x,
+        hide_y: plan.hide_y,
+        hide_w: plan.hide_w,
+        hide_h: plan.hide_h,
+    }))
+}
+
+/// Set window position without clamping (needed for off-screen peek).
+#[tauri::command]
+fn set_note_window_position(app: AppHandle, note_id: u32, x: f64, y: f64) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(&note_label(note_id)) else {
+        return Ok(());
+    };
+    window
+        .set_position(LogicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
+}
+
+/// Animate position + size (bookmark collapse / expand), anchored to dock edge.
+#[tauri::command]
+async fn animate_note_window_position(
+    app: AppHandle,
+    note_id: u32,
+    to_x: f64,
+    to_y: f64,
+    duration_ms: u64,
+    to_w: Option<f64>,
+    to_h: Option<f64>,
+    edge: Option<String>,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(&note_label(note_id)) else {
+        return Ok(());
+    };
+    let from = window_outer_rect(&window)?;
+    let target_w = to_w.unwrap_or(from.width);
+    let target_h = to_h.unwrap_or(from.height);
+    let edge = edge.unwrap_or_default();
+    // Bookmark tabs are smaller than the normal note min; relax then restore.
+    window
+        .set_min_size(Some(LogicalSize::new(36.0, 36.0)))
+        .map_err(|err| err.to_string())?;
+
+    // Ease-out expo-ish with enough frames for a smooth dock morph.
+    let steps = ((duration_ms / 12).max(12)).min(40);
+    let frame_ms = (duration_ms / steps).max(8);
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        // smootherstep → soft ease-in-out
+        let e = t * t * (3.0 - 2.0 * t);
+        let e = e * e * (3.0 - 2.0 * e);
+        let w = edge_dock::lerp(from.width, target_w, e);
+        let h = edge_dock::lerp(from.height, target_h, e);
+        let (x, y) = match edge.as_str() {
+            "left" => (to_x, edge_dock::lerp(from.y, to_y, e)),
+            "right" => (to_x + target_w - w, edge_dock::lerp(from.y, to_y, e)),
+            "top" => (edge_dock::lerp(from.x, to_x, e), to_y),
+            "bottom" => (edge_dock::lerp(from.x, to_x, e), to_y + target_h - h),
+            _ => (
+                edge_dock::lerp(from.x, to_x, e),
+                edge_dock::lerp(from.y, to_y, e),
+            ),
+        };
+        window
+            .set_size(LogicalSize::new(w, h))
+            .map_err(|err| err.to_string())?;
+        window
+            .set_position(LogicalPosition::new(x, y))
+            .map_err(|err| err.to_string())?;
+        tokio::time::sleep(std::time::Duration::from_millis(frame_ms)).await;
+    }
+    window
+        .set_size(LogicalSize::new(target_w, target_h))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(LogicalPosition::new(to_x, to_y))
+        .map_err(|e| e.to_string())?;
+    if target_w >= 250.0 && target_h >= 310.0 {
+        window
+            .set_min_size(Some(LogicalSize::new(250.0, 310.0)))
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_new_note_pinned_cmd(app: AppHandle, pinned: bool) -> Result<(), String> {
+    let mut settings = load_settings(&app);
+    settings.new_note_pinned = pinned;
+    save_settings(&app, &settings)
+}
+
 #[tauri::command]
 fn create_note_cmd(app: AppHandle) -> Result<(), String> {
     create_new_note(&app)
@@ -1207,6 +1384,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = set_last_note_close_cmd(app.clone(), LastNoteCloseAction::ConfirmQuit);
                 let _ = rebuild_tray_menu(app);
             }
+            "setting-new-note-pinned" => {
+                let pinned = !load_settings(app).new_note_pinned;
+                let _ = set_new_note_pinned_cmd(app.clone(), pinned);
+                let _ = rebuild_tray_menu(app);
+            }
             "toggle-dark" => emit_toggle_app_theme(app),
             "about" => open_about_window_deferred(app),
             "quit" => app.exit(0),
@@ -1258,8 +1440,12 @@ pub fn run() {
             close_note_window,
             update_note_window,
             set_note_always_on_top,
+            evaluate_note_edge_dock,
+            set_note_window_position,
+            animate_note_window_position,
             get_settings_cmd,
             set_last_note_close_cmd,
+            set_new_note_pinned_cmd,
             save_note_image_cmd,
             resolve_note_image_path_cmd,
             open_url_cmd,

@@ -59,6 +59,21 @@ description = "Allow set_note_always_on_top command."
 commands.allow = ["set_note_always_on_top"]
 
 [[permission]]
+identifier = "allow-evaluate-note-edge-dock"
+description = "Allow evaluate_note_edge_dock command."
+commands.allow = ["evaluate_note_edge_dock"]
+
+[[permission]]
+identifier = "allow-set-note-window-position"
+description = "Allow set_note_window_position command."
+commands.allow = ["set_note_window_position"]
+
+[[permission]]
+identifier = "allow-animate-note-window-position"
+description = "Allow animate_note_window_position command."
+commands.allow = ["animate_note_window_position"]
+
+[[permission]]
 identifier = "allow-create-note"
 description = "Allow create_note_cmd command."
 commands.allow = ["create_note_cmd"]
@@ -92,3 +107,8 @@ commands.allow = ["get_settings_cmd"]
 identifier = "allow-set-last-note-close"
 description = "Allow set_last_note_close_cmd command."
 commands.allow = ["set_last_note_close_cmd"]
+
+[[permission]]
+identifier = "allow-set-new-note-pinned"
+description = "Allow set_new_note_pinned_cmd command."
+commands.allow = ["set_new_note_pinned_cmd"]

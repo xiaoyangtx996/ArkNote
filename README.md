@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/xiaoyangtx996/ArkNote"><img src="https://img.shields.io/badge/platform-Windows-1D4ED8?style=flat-square" alt="Windows"></a>
   <img src="https://img.shields.io/badge/stack-Tauri%202%20%2B%20React-0F172A?style=flat-square" alt="Tauri 2 + React">
-  <img src="https://img.shields.io/badge/version-1.0.0-2563EB?style=flat-square" alt="v1.0.0">
+  <img src="https://img.shields.io/badge/version-1.0.1-2563EB?style=flat-square" alt="v1.0.1">
 </p>
 
 **ArkNote** 是一款托盘常驻的 Windows 桌面便签：每张便签一个原生窗口，支持 Markdown 与直接粘贴图片，内容自动写入「文档 / ArkNote」。
@@ -33,7 +33,7 @@
 构建产物：
 
 ```text
-src-tauri/target/release/bundle/nsis/ArkNote_1.0.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/ArkNote_1.0.1_x64-setup.exe
 ```
 
 安装后从开始菜单或托盘启动。

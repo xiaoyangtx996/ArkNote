@@ -12,6 +12,9 @@ export function NoteApp({ noteId }: NoteAppProps) {
     note,
     closedNotes,
     savedAt,
+    edgeDocked,
+    edgeDockSide,
+    onEdgeDockActivity,
     handleUpdate,
     handleClose,
     handleSaveNow,
@@ -27,13 +30,19 @@ export function NoteApp({ noteId }: NoteAppProps) {
 
   return (
     <ThemeProvider>
-      <div className="h-full w-full overflow-hidden rounded-lg">
+      <div
+        className="h-full w-full overflow-hidden rounded-lg"
+        onPointerDown={onEdgeDockActivity}
+        onKeyDown={onEdgeDockActivity}
+      >
         <NoteWindow
           variant="standalone"
           note={note}
           zIndex={1}
           savedAt={savedAt}
           closedNotes={closedNotes}
+          edgeDocked={edgeDocked}
+          edgeDockSide={edgeDockSide}
           onUpdate={handleUpdate}
           onClose={() => void handleClose()}
           onSaveNow={handleSaveNow}
