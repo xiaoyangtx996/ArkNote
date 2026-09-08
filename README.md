@@ -96,3 +96,4 @@ Documents/ArkNote/
 
 - 仓库：https://github.com/xiaoyangtx996/ArkNote
 - 最新版：https://github.com/xiaoyangtx996/ArkNote/releases/latest
+- 友情链接：[Linux.do](https://linux.do)
