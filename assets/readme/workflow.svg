@@ -1,45 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
   <title id="title">ArkNote 工作方式</title>
-  <desc id="desc">托盘入口、便签窗口与本地 Documents/ArkNote 数据目录三者协作。</desc>
-
+  <desc id="desc">托盘入口、贴边便签窗口与本地 Documents/ArkNote 目录协作。</desc>
   <defs>
     <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#FFFFFF"/>
       <stop offset="100%" stop-color="#F8FAFC"/>
     </linearGradient>
   </defs>
-
   <rect width="1200" height="280" rx="24" fill="#F1F5F9"/>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
-    <text x="48" y="48" fill="#64748B" font-size="18" font-weight="600" letter-spacing="1">HOW IT WORKS</text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <text x="48" y="48" fill="#64748B" font-size="18" font-weight="600" letter-spacing="1">HOW IT WORKS · v1.0.1</text>
 
-    <!-- card 1 -->
     <g transform="translate(48 72)">
       <rect width="320" height="160" rx="20" fill="url(#panel)" stroke="#E2E8F0"/>
       <circle cx="44" cy="44" r="18" fill="#DBEAFE"/>
       <text x="38" y="51" fill="#1D4ED8" font-size="20" font-weight="700">1</text>
       <text x="78" y="52" fill="#0F172A" font-size="24" font-weight="700">托盘</text>
-      <text x="28" y="96" fill="#475569" font-size="18">左键显示全部便签</text>
-      <text x="28" y="126" fill="#475569" font-size="18">右键新建 / 主题 / 关于</text>
+      <text x="28" y="96" fill="#475569" font-size="18">左键显示 · 右键设置</text>
+      <text x="28" y="126" fill="#475569" font-size="18">可选：新建默认置顶</text>
     </g>
 
     <path d="M388 152 L428 152" stroke="#93C5FD" stroke-width="3" stroke-linecap="round"/>
     <path d="M416 140 L432 152 L416 164" fill="none" stroke="#60A5FA" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <!-- card 2 -->
     <g transform="translate(440 72)">
       <rect width="320" height="160" rx="20" fill="url(#panel)" stroke="#E2E8F0"/>
       <circle cx="44" cy="44" r="18" fill="#DBEAFE"/>
       <text x="38" y="51" fill="#1D4ED8" font-size="20" font-weight="700">2</text>
       <text x="78" y="52" fill="#0F172A" font-size="24" font-weight="700">便签窗口</text>
-      <text x="28" y="96" fill="#475569" font-size="18">Markdown · 粘贴图片</text>
-      <text x="28" y="126" fill="#475569" font-size="18">置顶 · 字数 · 自动保存</text>
+      <text x="28" y="96" fill="#475569" font-size="18">置顶贴边 → 书签收起</text>
+      <text x="28" y="126" fill="#475569" font-size="18">拖选松手自动复制</text>
     </g>
 
     <path d="M780 152 L820 152" stroke="#93C5FD" stroke-width="3" stroke-linecap="round"/>
     <path d="M808 140 L824 152 L808 164" fill="none" stroke="#60A5FA" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <!-- card 3 -->
     <g transform="translate(832 72)">
       <rect width="320" height="160" rx="20" fill="url(#panel)" stroke="#E2E8F0"/>
       <circle cx="44" cy="44" r="18" fill="#DBEAFE"/>
